@@ -1,0 +1,4767 @@
+%
+% This is legcite.sty, by Charles Duan.
+%
+% Copyright 2013 Charles Duan. This program is free software: you can
+% redistribute it and/or modify it under the terms of the GNU General Public
+% License as published by the Free Software Foundation, either version 3 of the
+% License, or (at your option) any later version.
+%
+% This program is distributed in the hope that it will be useful, but WITHOUT
+% ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+% FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+%
+% You should have received a copy of the GNU General Public License along with
+% this program.  If not, see <http://www.gnu.org/licenses/>.
+%
+%
+% Provides for citations of legal documents, in the Bluebook format.
+%
+% Get a table of contents for this file with the Vim command:
+%
+% :g/^% [^a-z]*$/p
+%
+\ProvidesFile{legcite}[2004/09/30 Legal citation format]
+\RequirePackage{strings}
+\RequirePackage{sortlist}
+\RequirePackage{keyval}
+% Require fontenc, because of special symbols
+%\RequirePackage[T1]{fontenc}
+\def\bb@pkgname{legcite}
+%
+% OPTIONS
+%
+\newif\if@bb@review
+\newif\if@bb@reviewfonts
+\newif\if@bb@html
+\newif\if@bb@missingcites
+\let\bb@endnotes\relax
+\DeclareOption{review}{\@bb@reviewtrue\@bb@reviewfontstrue}
+\DeclareOption{journal}{\@bb@reviewtrue\@bb@reviewfontstrue}
+\DeclareOption{journalfonts}{\@bb@reviewfontstrue}
+\DeclareOption{memo}{\@bb@reviewfalse\bb@reviewfontsfalse}
+\DeclareOption{brief}{\@bb@reviewfalse\bb@reviewfontsfalse}
+\DeclareOption{endnote}{\let\bb@endnotes\@empty}
+\DeclareOption{endnotes}{\let\bb@endnotes\@empty}
+\DeclareOption{html}{\@bb@htmltrue\let\bb@endnotes\@empty}
+\DeclareOption{ignoremissing}{\@bb@missingcitestrue}%
+\ProcessOptions \relax
+%
+% UTILITY FUNCTIONS
+%
+% Define the ellipsis as specified by Bluebook Rule 5.3. Strangely, the spacing
+% is odd with the Times font, so it gets its own version...
+\@ifpackageloaded{times}{%
+    \DeclareTextCommandDefault{\textellipsis}{%
+	\ifhmode\ifdim\lastskip=\z@\kern.2\fontdimen3\font\fi\fi
+	.\kern\fontdimen3\font
+	.\kern\fontdimen3\font
+	.\kern\fontdimen3\font
+	\bb@eatellipsisdot
+    }%
+}{%
+    \def\textellipsis{%
+        \@tempcnta=\lastskip
+        \ifhmode\ifnum\@tempcnta=\z@\space\fi\fi
+	.~.~.~%
+	\bb@eatellipsisdot
+    }%
+}
+\def\sic!{[\emph{sic}]}
+\@ifpackageloaded{ulem}{%
+    \def\bb@ifemph{\@test \ifx\UL@on\UL@onin \fi}%
+}{%
+    \def\bb@ifemph{\@test \ifdim \fontdimen\@ne\font>\z@ \fi}%
+}
+\long\def\g@prepend@macro#1#2{%
+  \begingroup
+    \toks@\expandafter{#1}%
+    \edef\reserved@a##1{\gdef\noexpand#1{##1\the\toks@}}%
+    \reserved@a{#2}%
+  \endgroup}
+\def\bb@eatellipsisdot{\futurelet\@let@token\bb@eatellipsisdot@}
+\def\bb@eatellipsisdot@{%
+    \ifx\@let@token\fi
+	\@eatafi{\@skipafi{\@skipafi\bb@eatellipsisdot}}%
+    \else
+	\ifx\@let@token.%
+	    .\kern\fontdimen3\font
+	    \@skipafi{\@skipafi{\expandafter\ignorespaces\@gobble}}%
+	\fi
+    \fi
+}
+% Macro to set the spacefactor for dots to 1000.
+\def\@no@dot@space{\sfcode`\.\@m}
+\def\@re@dot@space{\spacefactor\sfcode`\.\relax}
+%
+% Eats up the next character if it's a dot. Useful if the last thing you just
+% wrote was a dot.
+\def\@gobble@dot{\futurelet\@dot@check\@@gobble@dot}
+\def\@@gobble@dot{%
+    \ifx\@dot@check.%
+	\@re@dot@space
+	\expandafter\@gobble
+    \fi
+}
+%
+% Tests whether [text] ends with a dot. 
+% USAGE: \@ifendswithdot[text]\@nil.\@nil\@stop{do this if it does}
+\def\@ifendswithdot#1.\@nil#2\@stop{\@ifnotempty{#2}}%
+\def\bb@commaifspc{\if@bb@inlcomma\ifx\@let@token\@sptoken,\fi\fi}
+\def\if@endswithdot#1{\@ifendswithdot#1\@nil.\@nil\@stop}
+%
+% Shows [text]\@this@page only if \@this@page is not \relax. Also, if
+% \@this@page ends with a dot, sets \@bb@dottrue.
+\DeclareRobustCommand\bb@maybepage[1]{%
+    \ifx\@this@page\relax\else
+	#1\@this@page
+        \expandafter\@ifendswithdot\@this@page\@nil.\@nil\@stop\@bb@dottrue
+        \@% In case page number ends with dot
+    \fi
+}
+%
+% Shows either [#1]\@this@page or [#2], depending on whether \@this@page is set.
+\DeclareRobustCommand\bb@pageordefault[2]{%
+    \ifx\@this@page\relax
+        #2%
+        \@ifendswithdot#2\@nil.\@nil\@stop\@bb@dottrue
+    \else
+	#1\@this@page
+        \expandafter\@ifendswithdot\@this@page\@nil.\@nil\@stop\@bb@dottrue
+    \fi
+}
+%
+% Pushes stuff onto the end of a token list.
+\def\push@toks#1#2{%
+    \long\edef\push@toks@##1{\noexpand#1{\the#1##1}}\push@toks@{#2}%
+}
+%
+% Protects certain symbols.
+\def\protect@syms{%
+    \let\bb@tilde~\let\bb@amp\&\let~\relax\let\&\relax
+    \let\bb@dollar\$\let\$\relax
+}
+\def\text@syms{%
+    \let\bb@tilde~\let\bb@amp\&\let~\space\def\&{&}%
+    \let\bb@dollar\$\def\${$}%
+}
+\def\restore@syms{\let~\bb@tilde\let\&\bb@amp\let\$\bb@dollar}
+%
+% Eat everything up to \@empty.
+\def\bb@eatto@empty#1\@empty{}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% CASE CITATION PARAMETERS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% These provide for the key-value entry of parameters to citations.
+%
+% Token list of all the parameter registers.
+\def\bb@params{}
+%
+% Special token to set undefined parameters to.
+\DeclareRobustCommand\bb@param@undef[1]{%
+    \PackageError\bb@pkgname{%
+        Citation parameter \noexpand#1 missing in \@this@case
+    }{Include the missing citation parameter.}%
+    \textbf{???}%
+}
+\def\bb@undefine#1{\def#1{\bb@param@undef{\string#1}}}
+%
+% Parameter definers.
+\def\bb@defparam#1{\expandafter\bb@defparam@\csname bb@kv@#1\endcsname{#1}{}}
+\def\bb@defparam@#1#2#3#4{%
+    \g@addto@macro\bb@params{\do#1{#4}}%
+    \define@key{bb}{#2}#3%
+}
+\def\bb@param@opt#1{%
+    \edef\reserved@a{%
+	\noexpand\def\expandafter\noexpand\csname KV@bb@#1@default\endcsname{%
+	    \expandafter\noexpand\csname bb@kv@#1\endcsname{}%
+	}%
+    }\reserved@a
+}
+\def\bb@newparam#1#2{%
+    \@expand{\bb@defparam{#1}{#2}}{%
+	\expandafter\def\csname bb@kv@#1\endcsname{##1}%
+    }i%
+}
+\def\bb@defparam@noval#1{%
+    \expandafter\bb@defparam@\csname bb@kv@#1\endcsname{#1}{[]}%
+}
+\def\bb@newparam@noval#1#2{%
+    \@expand{\bb@defparam@noval{#1}{#2}}{%
+	\expandafter\def\csname bb@kv@#1\endcsname{##1}%
+    }i%
+}
+\def\bb@param@alias#1#2{%
+    \edef\reserved@a{%
+	\noexpand\g@addto@macro\noexpand\bb@params{%
+	    \noexpand\do\expandafter\noexpand\csname bb@kv@#1\endcsname{%
+		Alias for #2%
+	    }%
+	}%
+	\noexpand\let\expandafter\noexpand\csname KV@bb@#1\endcsname
+	    \expandafter\noexpand\csname KV@bb@#2\endcsname
+    }\reserved@a
+}
+\bb@newparam{p}{First party name in the case}
+\bb@newparam{d}{Second party name in the case}
+\bb@newparam{vol}{Volume number}
+\bb@newparam{rep}{Reporter for the case}
+\bb@newparam{page}{Page number}
+\bb@newparam{docname}{Name of a document in a case}
+\bb@newparam{name}{Name of the case, article, regulation}
+\bb@newparam{court}{Court deciding the case}
+\bb@newparam{inline}{Alternative inline citation name for the case}
+\bb@newparam{docket}{Docket number of the case}
+\bb@newparam{dbid}{Database identifier for an online case}
+\bb@newparam@noval{netcase}{Case is a network-ID case}
+\bb@newparam@noval{noetal}{No et al. with 3 or more authors}
+\bb@newparam{aname}{Abbreviated full name}
+\bb@newparam{sname}{Sorting full name}
+\bb@newparam{ainline}{Abbreviated inline name}
+\bb@newparam{type}{Type of article in a law review}
+\bb@newparam{citation}{Citation for use as title in law review article}
+\bb@newparam{accessdate}{URL access date}
+\bb@newparam{state}{State (for constitutions)}
+\bb@newparam{to}{Recipient of letter, memorandum, etc.}
+\bb@newparam{number}{Number (for constitutional amendments, session laws)}
+\bb@newparam{publisher}{Publisher of book}
+\bb@newparam{committee}{House or Senate committee}
+\bb@newparam{bill}{Bill number for hearings}
+\bb@newparam{serial}{Serial number of book or publication}
+\bb@newparam@noval{notoa}{Do not include this citation in table of authorities}
+\bb@newparam{origyear}{Year of original publication of a book}
+\bb@newparam{issueyear}{Year a patent was issued}
+\bb@newparam{chapter}{Session law chapter}
+\bb@newparam@noval{forthcoming}{Journal article is forthcoming}
+\bb@defparam@noval{sameparties}{Parties to this case are same as named case}{%
+    \@ifundefined{case@#1@p}{%
+	\PackageWarning\bb@pkgname{`#1' is not a citation to a case}%
+    }{%
+	\expandafter\let\expandafter\bb@kv@p\csname case@#1@p\endcsname
+	\expandafter\let\expandafter\bb@kv@d\csname case@#1@d\endcsname
+	\expandafter\let\expandafter\bb@kv@name\csname case@#1@name\endcsname
+    }%
+}
+\bb@defparam@noval{revparties}{Parties to this case are reverse of named case}{%
+    \@ifundefined{case@#1@p}{%
+	\PackageWarning\bb@pkgname{`#1' is not a citation to a case}%
+    }{%
+	\expandafter\let\expandafter\bb@kv@p\csname case@#1@d\endcsname
+	\expandafter\let\expandafter\bb@kv@d\csname case@#1@p\endcsname
+	\expandafter\let\expandafter\bb@kv@name\csname case@#1@name\endcsname
+    }%
+}
+%
+% TODO: Need to support multiple prior/subsequent history entries
+%
+\bb@newparam{prior}{Prior history for a case}
+\bb@newparam{subsequent}{Subsequent history for a case}
+\bb@defparam{year}{Year/date of the case, article, regulation}{%
+    \bb@ifset\bb@kv@supplement{%
+	\protected@edef\bb@kv@year{#1 \& \bb@kv@supplement}%
+    }{%
+	\def\bb@kv@year{#1}%
+    }%
+}
+\bb@defparam{supplement}{Year/date of the supplement to the document}{%
+    \in@{Supp.}{#1}\ifin@
+	\def\bb@kv@supplement{#1}%
+    \else
+	\def\bb@kv@supplement{Supp. #1}%
+    \fi
+    \bb@ifset\bb@kv@year{%
+	\protected@edef\bb@kv@year{\bb@kv@year\space\& \bb@kv@supplement}%
+    }{%
+	\let\bb@kv@year\bb@kv@supplement
+    }%
+}
+%
+% Aliases
+\bb@param@alias{date}{year}
+\bb@param@alias{publno}{number}
+\bb@param@alias{publiclaw}{number}
+\bb@param@alias{origdate}{origyear}
+\bb@param@alias{issuedate}{issueyear}
+\bb@param@alias{title}{name}
+\bb@param@alias{src}{rep}
+%
+\bb@defparam{cite}{Citation as volume, title, page}{%
+    \bb@parse@cite{#1}\bb@kv@vol\bb@kv@rep\bb@kv@page
+}
+%
+% Parses a cite-like specification. Such a specification has three parts
+% (generally, a volume, source, and page). It may take on one of two forms:
+%
+%   - Three items separated by slashes (15/F.3d/123)
+%   - The items separated by spaces (15 F.3d 123)
+%
+% In the first case, if any of the parts include a slash, then the part must be
+% enclosed in braces.
+%
+% In the second case, the following determination is used to split off the first
+% and third parts:
+%
+%   - The first part is the first word (defined as text with no space)
+%   - The last part is the last word, possibly including the second-to-last word
+%     if the second-to-last word is a subdivision (Table 17)
+%   - The middle word is everything else
+%
+% Takes four arguments. The first is the text, and the remaining three are
+% macros in which the three parts will be stored.
+\def\bb@parse@cite#1{%
+    \bb@parse@cite@#1///\@stop{#1}%
+}
+\def\bb@parse@cite@#1/#2/#3/#4\@stop#5{%
+    \def\reserved@a{#4}\def\reserved@b{//}%
+    \@test \ifx\reserved@a\reserved@b \fi{%
+        \bb@parse@cite@set{#1}{#2}{#3}%
+    }{%
+        \bb@parse@cite@space{}{}#1 \@stop
+    }%
+}
+\def\bb@parse@cite@space#1#2#3 #4\@stop{%
+    \@ifempty{#4}{%
+        \bb@parse@cite@set{#1}{#2}{#3}%
+    }{%
+        \@ifempty{#1}{%
+            \bb@parse@cite@space{#3}{}#4\@stop
+        }{%
+            \@ifundefined{bb@t17@#3}{%
+                \@ifempty{#2}{%
+                    \bb@parse@cite@space{#1}{#3}#4\@stop
+                }{%
+                    \bb@parse@cite@space{#1}{#2 #3}#4\@stop
+                }%
+            }{%
+                \bb@parse@cite@space@join{#1}{#2}{#3}#4\@stop
+            }%
+        }%
+    }%
+}
+\def\bb@parse@cite@space@join#1#2#3#4 #5\@stop{%
+    \@ifempty{#5}{%
+        \bb@parse@cite@set{#1}{#2}{#3 #4}%
+    }{%
+        \@ifempty{#2}{%
+            \bb@parse@cite@space{#1}{#3}#4 #5\@stop
+        }{%
+            \bb@parse@cite@space{#1}{#2 #3}#4 #5\@stop
+        }%
+    }%
+}
+\def\bb@parse@cite@set#1#2#3#4#5#6{%
+    \@ifnotempty{#1}{\def#4{#1}}%
+    \@ifnotempty{#2}{\def#5{#2}}%
+    \@ifnotempty{#3}{\def#6{#3}}%
+}
+\bb@defparam{journal}{Unabbreviated journal name}{%
+    \bb@abbrev@journalname{#1}{\def\bb@kv@rep}%
+}
+\bb@defparam{jcite}{Citation as volume, unabbreviated journal, page}{%
+    \bb@parse@cite{#1}\bb@kv@vol\reserved@a\bb@kv@page
+    \@expand\bb@abbrev@journalname{\reserved@a}{i}{\def\bb@kv@rep}%
+}
+\bb@defparam{edition}{Edition number of book}{%
+    \protected@edef\reserved@a{\ifnum\m@ne<0#1 \fi}%
+    \ifx\reserved@a\@empty
+	\edef\bb@kv@edition{#1\bb@numtoord{#1} ed.}%
+    \else
+	\in@{ ed.}{#1}%
+	\ifin@ \def\bb@kv@edition{#1}\else \def\bb@kv@edition{#1 ed.}\fi
+    \fi
+}
+% If the plaintiff should not be used for the inline citation but is not in my
+% exclusion list
+\define@key{bb}{inlinedefendant}[]{\@expand\NotMainParty\bb@kv@p i}
+%
+% Parenthetical parameters. We make a special token list of parenthetical
+% creator commands, to be executed presumably upon the full citation.
+\newtoks\bb@param@parens
+\bb@defparam{paren}{A parenthetical to be included with citation}{%
+    \push@toks\bb@param@parens{\bb@addparen{\bb@paren@doc}{#1}}%
+}
+\bb@defparam@noval{enbanc}{En banc case}{%
+    \push@toks\bb@param@parens{\bb@addparen{\bb@paren@opinion}{en banc}}%
+}
+\bb@defparam@noval{mem}{Memorandum opinion}{%
+    \push@toks\bb@param@parens{\bb@addparen{\bb@paren@opinion}{mem.}}%
+}
+\bb@defparam@noval{percuriam}{Per curiam opinion}{%
+    \push@toks\bb@param@parens{\bb@addparen{\bb@paren@opinion}{per curiam}}%
+}
+\bb@defparam{hereinafter}{Text to use for hereinafter citation form}{%
+    \push@toks\bb@param@parens{\bb@addparen\bb@paren@hia{#1}}%
+}
+\bb@defparam@noval{bookreview}{Citation to book (or nothing)}{%
+    \@ifempty{#1}{%
+	\push@toks\bb@param@parens{\bb@addparen\bb@paren@bookreview{%
+	    book review%
+	}}%
+    }{%
+	\push@toks\bb@param@parens{\bb@addparen\bb@paren@bookreview{%
+	    \bb@fn@sig{reviewing} \clause{#1}%
+	}}%
+    }%
+}
+\bb@defparam{reprinted}{Reprinted in parenthetical}{%
+    \push@toks\bb@param@parens{%
+	\bb@addparen{\bb@paren@reprint}{\bb@fn@sig{reprinted in} \sentence{#1}}%
+    }%
+}
+\bb@defparam{url}{URL for citation}{%
+    \chop@prefix{available at }{#1}{\bb@defkey@url{available at}}%
+    \chop@prefix{at }{#1}{\bb@defkey@url{at}}%
+    \bb@defkey@url{}{#1}%
+    \@empty
+}
+\def\bb@defkey@url#1#2{%
+    \bb@parseurl{#2}\reserved@a
+    \protected@edef\reserved@a{%
+	\noexpand\push@toks\noexpand\bb@param@parens{%
+	    \bb@addparen{\bb@paren@url}{%
+		\@ifnotempty{#1}{\noexpand\bb@fn@sig{#1} }\reserved@a
+		\bb@ifset\bb@kv@accessdate{\space(\bb@kv@accessdate)}\@empty
+	    }%
+	}%
+    }%
+    \reserved@a
+    \bb@eatto@empty
+}
+\bb@defparam{comment}{Commentary on this source}{%
+    \def\do##1{%
+	\chop@prefix{##1 }{#1}{\bb@defkey@comment{##1}}%
+    }%
+    \bb@comment@phrases
+    \def\bb@comment@{}%
+    \def\bb@comment@@{}%
+    \process@words{#1}\bb@comment@word\bb@comment@punct\bb@comment@spc
+    \expandafter\do\expandafter{\bb@comment@@}%
+    \@empty
+}
+\def\bb@defkey@comment#1#2{%
+    \push@toks\bb@param@parens{%
+	\bb@addparen{\bb@paren@comment}{\emph{#1} \clause{#2}}%
+    }%
+    \bb@eatto@empty
+}
+\def\bb@comment@spc{\addto@macro\bb@comment@{ }}
+\def\bb@comment@punct#1{\addto@macro\bb@comment@{#1}}
+\def\bb@comment@phrases{%
+    \do{noted in}%
+    \do{construed in}%
+    \do{quoted in}%
+    \do{reviewed by}%
+    \do{cited in}%
+    \do{cited with approval in}%
+    \do{questioned in}%
+}
+\def\bb@comment@preps{in,by}
+\def\bb@comment@word#1{%
+    \addto@macro\bb@comment@{#1}%
+    \@expand{\in@{#1}}{\bb@comment@preps}i\ifin@
+	\let\bb@comment@@\bb@comment@
+    \fi
+}
+%
+% Author lists.
+\def\bb@param@auths{}
+\def\bb@param@authlns{}
+% This is just so it gets reset regularly.
+\bb@newparam{authln}{Last name of the first author, for short citations}
+\bb@defparam{author}{Author of the article or book}{%
+    \protected@edef\reserved@a{%
+	\noexpand\g@addto@macro\noexpand\bb@param@authlns{%
+	    \noexpand\do{\bb@authln{#1}}%
+	}%
+    }\reserved@a
+    \bb@auth@separateinst#1, , \@stop
+}
+%
+% Permits for an author credited on behalf of an institution, R. 15.1(c). This
+% is something of a hack; the correct solution would be to detect when both a
+% regular author and an institutional author have been provided.
+%
+\def\bb@auth@separateinst#1, #2, #3\@stop{%
+    \@ifempty{#3}{% No institutional author
+        \g@addto@macro\bb@param@auths{\do{#1}}%
+    }{%
+        \bb@auth@separateinst@{#1}#2, #3\@stop
+    }%
+}
+\def\bb@auth@separateinst@#1#2, , \@stop{%
+    \bb@abbrev@name{#2}{\bb@auth@separateinst@@{#1}}%
+}
+\def\bb@auth@separateinst@@#1#2{%
+    \g@addto@macro\bb@param@auths{\do{#1, #2}}%
+}
+\bb@defparam{instauth}{Institutional author}{%
+    \@bb@abbrev@ustrue
+    \bb@abbrev@name{#1}{\bb@instauth}%
+}
+\def\bb@instauth#1{%
+    \g@addto@macro\bb@param@authlns{\do{#1}}%
+    \g@addto@macro\bb@param@auths{\do{#1}}%
+}
+\def\bb@authlistparam#1#2#3#4#5{%
+    \bb@defparam{#1}{#2}{%
+	\g@addto@macro#3{\do{##1}}%
+    }%
+    \bb@defparam{#4}{#5}{%
+	\bb@abbrev@name{##1}{\bb@instauthparam#3}%
+    }%
+}
+\def\bb@instauthparam#1#2{\g@addto@macro#1{\do{#2}}}
+\bb@authlistparam{editor}{Editor(s) of book}{\bb@param@eds}
+		 {insted}{Institutional editor}
+\bb@authlistparam{translator}{Translator(s) of book}{\bb@param@trs}
+		 {insttr}{Institutional translator}
+\bb@authlistparam{edtrans}{Editor/translator(s) of book}{\bb@param@edtrs}%
+		 {instedtr}{Institutional editor/translator}
+\def\bb@authln#1{\bb@authln@#1{.}\@stop{#1}}
+\def\bb@authln@#1#{\bb@authln@@@}
+\def\bb@authln@@@#1#2\@stop#3{\@ifempty{#2}{\bb@authln@@#3 \@stop}{#1}}
+\def\bb@authln@@#1 #2\@stop{%
+    \@ifempty{#2}{\bb@chopcomma#1,\@stop}{%
+        \bb@ifcomma#1,\@stop{\bb@chopcomma#1,\@stop}{%
+            \bb@iffirstlc#1 \@stop{%
+		#1\bb@authln@von{#2}%
+            }{%
+		\bb@ifroman{#2}{#1}{\bb@authln@@#2\@stop}%
+	    }%
+        }%
+    }%
+}
+%
+% Macro for use in citation definitions, to place the author name with an
+% invisible last name in front (for use in TOA sorting).
+%
+\def\bb@kv@author@sortable{%
+    \noexpand\@gobble{\bb@kv@authln}\@capnext\bb@kv@author
+}
+\def\bb@authln@von#1{%
+    \bb@ifcomma#1,\@stop{\bb@chopcomma#1,\@stop}{\bb@authln@von@#1 \@stop}%
+}
+\def\bb@authln@von@#1 #2\@stop{%
+    \@ifnotempty{#1}{ #1}%
+    \@ifnotempty{#2}{\bb@ifroman{#2}{}{\bb@authln@@#2\@stop}}%
+}%
+\def\bb@chopcomma#1,#2\@stop{#1}
+\def\bb@ifcomma#1,#2\@stop{\@ifempty{#2}\@secondoftwo\@firstoftwo}
+\def\bb@capnext#1{\char\uccode`#1}
+\def\bb@iffirstlc#1#2\@stop{\@test \ifnum`#1=\lccode`#1 \fi}
+\def\bb@ifroman#1{\bb@ifroman@#1.\@stop}
+\def\bb@ifroman@#1#2\@stop{%
+    \@ifempty{#2}{\@firstoftwo}{%
+	\@ifundefined{bb@roman@#1}\@secondoftwo{\bb@ifroman@#2\@stop}%
+    }%
+}%
+\let\bb@roman@I\bb@ifroman
+\let\bb@roman@V\bb@ifroman
+\let\bb@roman@X\bb@ifroman
+\let\bb@roman@L\bb@ifroman
+\let\bb@roman@C\bb@ifroman
+\let\bb@roman@M\bb@ifroman
+%
+% Writes the authors, with appropriate joining commas and ampersands, and et al.
+% if required.
+\def\bb@drawlist@noetal#1#2#3#4{%
+    \@test \ifx#1\@empty \fi {\bb@undefine#2}{%
+	\def\do##1##2##3##4{%
+	    ##1%
+	    \ifx##2\do
+		\ifx##4\do
+		    , \@skipafi{\@skipafi{##2{##3}##4}}%
+		\else
+		    \space\& ##3%
+		    \bb@optspace{#4}%
+		\fi
+	    \else
+		\bb@drawlist@noetalend##1\@nil. et al.\@nil.\@stop
+		{\bb@optspace{#3}}{\bb@optspace{#4}}%
+	    \fi
+	}%
+	\protected@edef#2{#1\@empty\@empty\@empty}%
+    }%
+}
+\def\bb@drawlist@etal#1#2#3#4{%
+    \@test \ifx#1\@empty \fi {\bb@undefine#2}{%
+	\def\do##1##2##3##4{%
+	    ##1%
+	    \ifx##2\do
+		\ifx##4\do \space et al.\else \space\& ##3\fi
+		\bb@optspace{#4}%
+		\@skipafi\bb@eatto@empty
+	    \else
+		\bb@drawlist@noetalend##1\@nil. et al.\@nil.\@stop
+		{\bb@optspace{#3}}{\bb@optspace{#4}}%
+	    \fi
+	}%
+	\protected@edef#2{#1\@empty\@empty\@empty}%
+    }%
+}
+\def\bb@drawlist@noetalend#1 et al.\@nil.#2\@stop{\@ifempty{#2}}%
+\def\bb@optspace#1{\@ifnotempty{#1}{\space #1}}
+\def\bb@draw@auths{%
+    \bb@ifset\bb@kv@noetal{%
+	\bb@drawlist@noetal\bb@param@auths\bb@kv@author{}{}%
+    }{%
+	\bb@drawlist@etal\bb@param@auths\bb@kv@author{}{}%
+    }%
+    \bb@ifset\bb@kv@authln\relax{%
+	\bb@drawlist@etal\bb@param@authlns\bb@kv@authln{}{}%
+    }%
+    \bb@drawlist@etal\bb@param@eds\bb@kv@editor{ed.}{eds.}%
+    \bb@drawlist@etal\bb@param@trs\bb@kv@translator{trans.}{trans.}%
+    \bb@drawlist@etal\bb@param@edtrs\bb@kv@edtrans
+						{ed. \& trans.}{eds. \& trans.}%
+}
+%
+% Manipulation of parameters.
+%
+% Reset all parameters and then set them according to a keyval argument.
+\def\bb@param@set#1{%
+    \def\do##1##2{\bb@undefine##1}\bb@params
+    \bb@param@parens{}%
+    \def\bb@param@auths{}%
+    \def\bb@param@authlns{}%
+    \def\bb@param@eds{}%
+    \def\bb@param@trs{}%
+    \def\bb@param@edtrs{}%
+    \setkeys{bb}{#1}%
+    \bb@draw@auths
+}
+\def\bb@ifset#1{%
+    \expandafter\bb@ifset@#1.\@stop
+}
+\def\bb@ifset@#1#2\@stop{%
+    \ifx\bb@param@undef#1\expandafter\@secondoftwo
+    \else                \expandafter\@firstoftwo   \fi
+}
+\def\bb@param@optspc#1#2{%
+    \bb@ifset#1{%
+        \bb@ifset#2{%
+            #1\space#2
+        }{#1}%
+    }{\bb@ifset#2{#2}{}}%
+}
+%
+% Sets the TOA citation type (or does nothing, if we don't want it in the TOA
+\def\bb@citetype#1#2{%
+    \bb@ifset\bb@kv@notoa\relax{%
+	\global\expandafter\let\csname tc@#1\endcsname#2%
+    }%
+}
+\DeclareRobustCommand*\bb@citeguts[1]{%
+    \begingroup
+	\@no@dot@space
+	#1%
+	\bb@dot@after@group
+    \endgroup
+    \bb@nocap
+}
+%
+% Produces a supra citation form (BB rule 4.2). This function will (1) write the
+% short citation form for a given citation object, and (2) notify that this
+% citation object uses a supra-type form (relevant to calculations in
+% \bb@docite).
+%
+% Arguments are [#1] citation object, and [#2] citation name.
+\def\bb@supra@form#1#2{%
+    \toks@{#2}%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\bb@usevol
+	    \the\toks@\unkern, \noexpand\bb@fn@sig{supra}%
+	    \noexpand\bb@notepos{#1}%
+	    \bb@maybepage{, \bb@page@atorsect}%
+	}%
+	\noexpand\bb@hia@remove{#1}%
+    }%
+    % Declare that this citation is of supra form. This has two effects: (1) the
+    % last-citation-note register (\dfc@[name]) is not updated, and (2) the
+    % number of notes between this cite and the previous one are ignored.
+    \global\expandafter\let\csname sc@#1@supra\endcsname\bb@supra@form
+}
+\def\bb@type@other{Other Sources}
+\def\bb@type@const{Constitutional Provisions}
+\def\bb@type@statute{Statutes}
+\def\bb@type@case{Cases}
+\def\bb@type@doforall{%
+    \do\bb@type@case
+    \do\bb@type@const
+    \do\bb@type@statute
+    \do\bb@type@other
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% CASE CITATION DEFINERS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% These macros produce the citation macros for cases. Each citation forms macros
+% of citation types, of the form \[type]@[#1]:
+%    [ fc  ] => full citation. Required.
+%    [ sc  ] => short citation. Required if the full citation makes use of
+%               \did@full@cite.
+%    [ lc  ] => full citation, for use in table of authorities. Optional.
+%    [ pc  ] => page number formatter. Optional; defaults to \@format@pageno.
+%    [ ic  ] => inline citation, for internal use if desired.
+%    [ idc ] => id. citation. Optional.
+%
+%
+\let\bb@citeforms\@empty
+\def\bb@newcite#1#2{%
+    \g@addto@macro\bb@citeforms{\do{#1}{#2}}%
+    \def#1##1##2%
+}
+%
+% Define a case by name.
+%
+% Parameters:
+%   label for the case, first party, second party, volume, reporter, page,
+%   court, year
+% Produces a new command, \case@[label], containing seven macro tokens:
+%   \long@case, and then the parameters.
+%
+\bb@newcite\defcase{A case citation, BB R. 10}{%
+    \bb@param@set{#2}%
+    \bb@case@setparties{#1}%
+    \bb@case@history
+    \bb@case@proc
+    \bb@citetype{#1}\bb@type@case
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@casename
+	    \noexpand\bb@case@testenv{%
+		\noexpand\bb@name@comma
+		\bb@ifset\bb@kv@netcase{%
+		    No. \bb@kv@docket % Docket number
+		    \bb@ifset{\bb@kv@dbid}{, \bb@kv@dbid}{}%
+		    \bb@maybepage{, \bb@page@atorsect}%
+		}{%
+		    \bb@kv@vol\space \bb@kv@rep\space \bb@kv@page
+		    \bb@maybepage{, }%
+		}%
+	    }%
+	}%
+	\noexpand\bb@case@testenv{%
+	    \noexpand\did@full@cite{#1}%
+	    \the\bb@param@parens
+	    \bb@addparen{\bb@paren@date}{%
+		\bb@param@optspc\bb@kv@court\bb@kv@year
+	    }%
+	}%
+	\bb@case@fullinline
+    }%
+    \expandafter\protected@xdef\csname lc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@kv@sname\noexpand\bb@font@comma
+	    \bb@ifset\bb@kv@netcase{%
+		No. \bb@kv@docket % Docket number
+		\bb@ifset{\bb@kv@dbid}{, \bb@kv@dbid}{}%
+		\bb@maybepage{, \bb@page@atorsect}%
+	    }{%
+		\bb@kv@vol\space\bb@kv@rep\space\bb@kv@page% Reporter and page
+		\bb@maybepage{, }%
+	    }%
+	}%
+	\bb@addparen{\bb@paren@date}{%
+	    \bb@param@optspc\bb@kv@court\bb@kv@year
+	}%
+    }%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@inlpty % Parties
+	    \bb@maybepage{%
+		\noexpand\bb@name@comma \noexpand\@bb@dotfalse
+		\bb@ifset\bb@kv@netcase{%
+		    \bb@ifset{\bb@kv@dbid}{\bb@kv@dbid, }{}%
+		}{%
+		    \bb@kv@vol\space\bb@kv@rep\space %
+		}%
+		at % Page number inserted by \bb@maybepage
+	    }%
+	}%
+    }%
+}
+\def\bb@case@setparties#1{%
+    \global\expandafter\let\csname case@#1@p\endcsname\bb@kv@p
+    \global\expandafter\let\csname case@#1@d\endcsname\bb@kv@d
+    \global\expandafter\let\csname case@#1@name\endcsname\bb@kv@name
+}
+\@test \if@bb@review \fi {%
+    \def\bb@case@testenv#1{\if@bb@note #1\fi}
+    \def\bb@case@fullinline{\if@bb@note\if@bb@inline\bb@full@inline\fi\fi}
+}{%
+    \def\bb@case@testenv#1{\if@bb@inline\else #1\fi}
+    \let\bb@case@fullinline\relax
+}
+%
+%
+% Inside a full citation definer.
+\def\bb@casename{%
+    \noexpand\if@bb@name
+	\noexpand\if@bb@inline
+	    \bb@kv@name
+	\noexpand\else
+	    \bb@kv@aname
+	    \expandafter\@ifendswithdot\bb@kv@aname\@nil.\@nil\@stop
+		{\noexpand\@bb@dottrue}%
+	\noexpand\fi
+    \noexpand\fi
+}
+%
+% Inside a short citation definer.
+\def\bb@inlpty{%
+    \noexpand\if@bb@name
+	\noexpand\if@bb@inline
+	    \bb@kv@inline
+	    \expandafter\@ifendswithdot\bb@kv@inline\@nil.\@nil\@stop
+		{\noexpand\@bb@dottrue}%
+	\noexpand\else
+	    \bb@kv@ainline
+	    \expandafter\@ifendswithdot\bb@kv@ainline\@nil.\@nil\@stop
+		{\noexpand\@bb@dottrue}%
+	\noexpand\fi
+    \noexpand\fi
+}
+%
+% Creates a citation for a regulation.
+\bb@newcite\defreg{A citation to a regulation}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@statute
+    \bb@statutory@pages{#1}
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@ifset\bb@kv@name{\noexpand\@capnext\bb@kv@name, }{}%
+	    \bb@ifset\bb@kv@vol{\noexpand\@capnext\bb@kv@vol\space}{}%
+	    \bb@kv@rep \space % Set of regulations (e.g., C.F.R.)
+            \bb@pageordefault{}{%
+                \bb@ifset\bb@kv@page{%
+                    \@expand\@format@pageno\bb@kv@page i%
+                }{}%
+            }%
+	}%
+        \bb@ifset\bb@kv@year{%
+            \bb@addparen\bb@paren@date{%
+                \bb@param@optspc\bb@kv@publisher\bb@kv@year
+            }%
+        }%
+	\noexpand\did@full@cite{#1}%
+	\the\bb@param@parens
+	\noexpand\bb@set@title{\bb@kv@vol/\bb@kv@rep}%
+	\bb@ifset\bb@kv@name{\noexpand\@bb@inlcommatrue}{}%
+    }%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\bb@if@title{\bb@kv@vol/\bb@kv@rep}{}{%
+                \bb@ifset\bb@kv@vol{\noexpand\@capnext\bb@kv@vol\space}{}%
+                \@capnext\bb@kv@rep\space
+            }%
+            \bb@pageordefault{}{%
+                \bb@ifset\bb@kv@page{%
+                    \@expand\@format@pageno\bb@kv@page i%
+                }{}%
+            }%
+	}%
+	\noexpand\bb@set@title{\bb@kv@vol/\bb@kv@rep}%
+    }%
+}
+%
+% Document used in a case.
+%
+% Parameters:
+%   label for the case, first party, second party, volume, reporter, page,
+%   court, year
+% Produces a new command, \case@[label], containing seven macro tokens:
+%   \long@case, and then the parameters.
+%
+\bb@newcite\defcasedoc{Document used in a case, R. 10.8.3}{%
+    \bb@param@set{#2}%
+    \bb@case@setparties{#1}%
+    \bb@case@history
+    \bb@case@proc
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@kv@docname
+            \bb@maybepage{ at }%
+            ,
+	    \bb@casename
+	    \noexpand\bb@case@testenv{%
+		\noexpand\bb@name@comma
+                \bb@ifset\bb@kv@rep{%
+                    \bb@kv@vol\space \bb@kv@rep\space \bb@kv@page
+                }{%
+                    No. \bb@kv@docket
+                    \bb@ifset\bb@kv@dbid{, \bb@kv@dbid}{}%
+                }%
+	    }%
+	}%
+	\noexpand\bb@case@testenv{%
+	    \noexpand\did@full@cite{#1}%
+	    \the\bb@param@parens
+            \bb@ifset\bb@kv@rep{%
+                \bb@addparen{\bb@paren@casedocdocket}{No.~\bb@kv@docket}%
+            }{}%
+	    \bb@addparen{\bb@paren@date}{%
+		\bb@param@optspc\bb@kv@court\bb@kv@year
+	    }%
+	}%
+	\bb@case@fullinline
+    }%
+    \expandafter\protected@xdef\csname lc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@kv@docname
+            \bb@maybepage{ at }%
+            ,
+	    \bb@kv@sname\noexpand\bb@font@comma
+            \bb@ifset\bb@kv@rep{%
+                \bb@kv@vol\space \bb@kv@rep\space \bb@kv@page
+            }{%
+                No. \bb@kv@docket
+                \bb@ifset\bb@kv@dbid{, \bb@kv@dbid}{}%
+            }%
+	}%
+        \bb@ifset\bb@kv@rep{%
+            \bb@addparen{\bb@paren@casedocdocket}{No.~\bb@kv@docket}%
+        }{}%
+	\bb@addparen{\bb@paren@date}{%
+	    \bb@param@optspc\bb@kv@court\bb@kv@year
+	}%
+    }%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@kv@docname
+            \bb@maybepage{ at }%
+            ,
+	    \bb@inlpty % Parties
+            \noexpand\bb@name@comma
+            \bb@ifset\bb@kv@rep{%
+                \bb@kv@vol\space \bb@kv@rep\space \bb@kv@page
+            }{%
+                No. \bb@kv@docket
+                \bb@ifset\bb@kv@dbid{, \bb@kv@dbid}{}%
+            }%
+	}%
+        \bb@ifset\bb@kv@rep{%
+            \bb@addparen{\bb@paren@casedocdocket}{No.~\bb@kv@docket}%
+        }{}%
+    }%
+}
+\bb@newcite\defjrnart{A consecutively paginated journal article, BB R. 16.3}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@ifset\bb@kv@author{\bb@kv@author@sortable, }{}%
+	    \bb@ifset\bb@kv@type{\noexpand\@capnext\bb@kv@type, }{}%
+	    \bb@ifset\bb@kv@name{% Title
+		\noexpand\bb@fn@arttitle{\bb@kv@name},
+	    }{%
+		% If no title set, if there's a citation, use that as the title
+		\bb@ifset\bb@kv@citation{%
+		    \noexpand\bb@fn@arttitle{%
+			\protect\inline{\bb@kv@citation}%
+		    },
+		}{}%
+	    }%
+	    \bb@ifset\bb@kv@vol{\bb@kv@vol}{\bb@kv@year} % Volume
+	    \noexpand\bb@fn@jrntitle{\bb@kv@rep}% Magazine title
+            \bb@ifset\bb@kv@forthcoming{}{%
+                \space
+                \bb@kv@page % First page
+                \bb@maybepage{, }% Pin cite page
+            }%
+	}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+	\bb@ifset\bb@kv@vol{%
+            \bb@addparen\bb@paren@date{%
+                \bb@ifset\bb@kv@forthcoming{forthcoming }{}%
+                \bb@kv@year
+            }%
+        }{%
+            \bb@ifset\bb@kv@forthcoming{%
+                \bb@addparen\bb@paren@date{forthcoming}%
+            }{}%
+        }%
+        \bb@ifset\bb@kv@forthcoming{%
+            \noexpand\ifx\noexpand\@this@page\relax\noexpand\else
+                \bb@addparen\bb@paren@forthcomingms{%
+                    manuscript at \noexpand\@this@page
+                }%
+            \noexpand\fi
+        }{}%
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln{\@capnext\bb@kv@authln}{%
+	    \bb@ifset\bb@kv@type{\@capnext\bb@kv@type}{%
+		\noexpand\bb@fn@arttitle{\bb@kv@name}%
+	    }%
+	}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defmagart{A non-consecutively paginated journal, BB R. 16.4}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \bb@checkfulldate\bb@kv@year
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@ifset\bb@kv@author{\bb@kv@author@sortable, }{}%
+	    \noexpand\bb@fn@arttitle{\bb@kv@name}, % Title
+	    \noexpand\bb@fn@jrntitle{\bb@kv@rep}, % Magazine title
+	    \bb@kv@year
+            \bb@ifset\bb@kv@page{, % Date
+                \bb@page@atorsect\bb@kv@page % First page number
+            }{}%
+	    \bb@maybepage{, }%
+	}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln{\@capnext\bb@kv@authln}{%
+	    \noexpand\bb@fn@sig{\bb@kv@name}%
+	}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\deftvshow{A television show, BB R.18.5}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@fn@tvtitle{\bb@kv@name}%
+	}%
+	\the\bb@param@parens
+	\bb@addparen{\bb@paren@date}{%
+	    \bb@param@optspc\bb@kv@publisher\bb@kv@year
+	}%
+	\noexpand\did@full@cite{#1}%
+    }%
+    \protected@edef\reserved@a{%
+	\noexpand\bb@fn@tvtitle{\bb@kv@name}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defnewsart{A newspaper article}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@ifset\bb@kv@author{\bb@kv@author@sortable, }{}%
+	    \noexpand\bb@fn@arttitle{\bb@kv@name}, % Title
+	    \noexpand\bb@fn@jrntitle{\bb@kv@rep}, % Magazine title
+	    \bb@kv@year % Date
+	    \bb@ifset\bb@kv@page{%
+		, \bb@page@atorsect\bb@kv@page % First page number
+	    }{}%
+	}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln{\@capnext\bb@kv@authln}{%
+	    \noexpand\bb@fn@sig{\bb@kv@name}%
+	}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defhearing{A Congressional hearing, BB R.13.3}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \@expand\bb@abbrev@name\bb@kv@committee i{\def\bb@kv@committee}%
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \@capemph{%
+		\bb@ifset\bb@kv@name{\bb@kv@name: }{}%
+		Hearing
+		\bb@ifset\bb@kv@bill{on \bb@kv@bill\space}{}%
+		Before the \bb@kv@committee
+	    }\bb@font@comma
+	    \expandafter\bb@numtotxt\expandafter{\bb@kv@number} Congress%
+	    \bb@maybepage{ }%
+	}%
+	\bb@addparen{\bb@paren@date}{\bb@kv@year}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \protected@edef\reserved@a{%
+	\noexpand\bb@fn@sig{\bb@kv@name}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defletter{A letter or memorandum, BB R. 17.1.3}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \bb@ifset\bb@kv@type{}{\def\bb@kv@type{Letter}}
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \@capnext\bb@kv@type
+	    \bb@ifset\bb@kv@author{ from \bb@kv@author@sortable}{}%
+	    \bb@ifset\bb@kv@to{, to \bb@kv@to}{}%
+	    \bb@ifset\bb@kv@name{, \noexpand\bb@fn@sig{\bb@kv@name}}% Title
+	    \bb@maybepage{ }%
+	}%
+	\bb@addparen{\bb@paren@date}{\bb@kv@year}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln{\@capnext\bb@kv@authln}{%
+	    \noexpand\bb@fn@sig{\bb@kv@name}%
+	}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defpressrelease{A press release, BB R. 17.1.3}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    Press Release,
+	    \bb@ifset\bb@kv@author{\bb@kv@author@sortable, }{}%
+	    \bb@ifset\bb@kv@name{\noexpand\bb@fn@sig{\bb@kv@name}}% Title
+	    \bb@maybepage{ }%
+	}%
+	\bb@addparen{\bb@paren@date}{\bb@kv@year}%
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln{\@capnext\bb@kv@authln}{%
+	    \noexpand\bb@fn@sig{\bb@kv@name}%
+	}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\bb@newcite\defpatent{A U.S. Patent, BB 18 R. 14.9}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \bb@checkfulldate\bb@kv@year
+    \bb@ifset\bb@kv@issueyear{%
+	\bb@checkfulldate\bb@kv@issueyear
+    }\relax
+    \ifnum\bb@kv@number<\@m
+	\let\bb@kv@inline\bb@kv@number
+    \else
+	\@tempcnta\bb@kv@number\relax
+	\divide\@tempcnta\@m \multiply\@tempcnta-\@m
+	\advance\@tempcnta\bb@kv@number\relax
+	\def\bb@kv@inline{'\the\@tempcnta}%
+    \fi
+    \edef\bb@kv@number{%
+	\expandafter\bb@numtotxt@comma\expandafter{\bb@kv@number}%
+    }%
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@ifset\bb@kv@name{\@capnext\bb@kv@name, }\@empty
+	    U.S. Patent No. \bb@kv@number
+            \bb@maybepage{ }%
+	}%
+	\bb@addparen{\bb@paren@date}{filed \bb@kv@year}%
+	\bb@ifset\bb@kv@issueyear{%
+	    \bb@addparen{\bb@paren@date}{issued \bb@kv@issueyear}%
+	}\relax
+	\the\bb@param@parens
+	\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+        \bb@citeguts{%
+            \noexpand\if@bb@inline \@capnext the \noexpand\fi
+            \bb@kv@inline\space Patent%
+            \bb@maybepage{ }%
+        }%
+    }%
+}
+\bb@newcite\defbook{A book or non-periodic material, BB R. 15}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \bb@book@pubparen
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\bb@usevol
+            \bb@ifset\bb@kv@author{%
+                \noexpand\@gobble{\bb@kv@authln}%
+                \noexpand\bb@fn@bookauthor{\bb@kv@author}, 
+            }{}%
+	    \noexpand\bb@fn@booktitle{%
+		\bb@ifset\bb@kv@serial{\bb@kv@serial, }{}% Serial number
+		\bb@kv@name
+	    }%
+	    \bb@maybepage{ }%
+	}%
+	\bb@addparen\bb@paren@date{\bb@book@paren}%
+	\bb@ifset\bb@kv@origyear{\bb@addparen\bb@paren@date{\bb@kv@origyear}}{}%
+	\noexpand\@bb@inlcommatrue
+	\noexpand\did@full@cite{#1}%
+	\the\bb@param@parens
+    }%
+    \protected@edef\reserved@a{%
+	\bb@ifset\bb@kv@authln\bb@kv@authln{\noexpand\bb@fn@sig{\bb@kv@name}}%
+    }%
+    \@expand{\bb@supra@form{#1}}\reserved@a i%
+}
+\def\bb@book@pushed#1{%
+    \bb@ifset#1{\protected@edef\bb@book@paren{\bb@book@paren#1, }}{}%
+}
+\def\bb@book@serial#1#2{%
+    \@ifnotempty{#2}{%
+	% Abbreviate the first part.
+	\@bb@abbrev@ustrue
+	\bb@abbrev@name{#1}{\def\bb@kv@serial}%
+	\in@{, }{#2}\ifin@
+	    \PackageWarning\bb@pkgname{%
+		Found comma in serial number:\MessageBreak
+		institution=#1,\MessageBreak
+		number \@spaces=#2.\MessageBreak
+		I use commas to delimit institutions from serial\MessageBreak
+		numbers, so you should use braces so I know which\MessageBreak
+		comma actually belongs to a part.\MessageBreak
+		This occurred on
+	    }%
+	\fi
+	\protected@edef\bb@kv@serial{\bb@kv@serial, #2}%
+	\bb@book@pushed\bb@kv@serial
+        \bb@undefine\bb@kv@serial % Date parenthetical
+    }%
+}%
+\def\bb@book@pubparen{%
+    \let\bb@book@paren\@empty  % Date parenthetical
+    \bb@book@pushed\bb@kv@editor
+    \bb@book@pushed\bb@kv@translator
+    \bb@book@pushed\bb@kv@edtrans
+    \bb@ifset\bb@kv@serial{%
+	% Expand \bb@kv@serial, split by ", ", and run \bb@book@serial
+	\@expand{\@split{, }}\bb@kv@serial i\bb@book@serial
+    }\relax
+    \bb@ifset\bb@kv@year\relax{%
+	\PackageWarning\bb@pkgname{%
+	    No publication date given for book
+	}%
+	\def\bb@kv@year{n.d.}%
+    }%
+    \bb@ifset\bb@kv@edition{%
+	\protected@edef\bb@kv@year{\bb@kv@edition\space\bb@kv@year}%
+    }\relax
+    \bb@ifset\bb@kv@publisher{%
+	\@bb@abbrev@ustrue
+	\@expand\bb@abbrev@name\bb@kv@publisher i{\def\bb@kv@publisher}%
+	\protected@edef\bb@kv@year{\bb@kv@publisher\space\bb@kv@year}%
+    }\relax
+    \protected@edef\bb@book@paren{\bb@book@paren\bb@kv@year}%
+}
+%\bb@newcite\defthesis{An unpublished thesis, BB R. 17.1.2}{%
+    %\bb@param@set{#2}%
+    %\bb@citetype{#1}\bb@type@other
+    %\expandafter\protected@xdef\csname fc@#1\endcsname{%
+\bb@newcite\defprespaper{A Presidential Paper, BB R. 14.7}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@kv@name, % Title
+	    \bb@kv@vol\space % Volume
+	    \bb@kv@rep\space % Title
+	    \bb@kv@page % Page number
+	    \bb@maybepage{, }%
+	}%
+	\bb@addparen{\bb@paren@date}{\bb@kv@year}%
+	\the\bb@param@parens
+	%\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+}
+\bb@newcite\defwebsite{A web site or generic citation}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@other
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+            \bb@ifset\bb@kv@author{\bb@kv@author@sortable, }{}%
+	    \noexpand\bb@fn@webtitle{\bb@kv@name}% Title
+	    \bb@maybepage{ }%
+	}%
+	\bb@addparen{\bb@paren@date}{\bb@kv@year}%
+	\the\bb@param@parens
+	%\noexpand\did@full@cite{#1}%
+	\noexpand\@bb@inlcommatrue
+    }%
+}
+%
+% Constitutional amendments.
+\bb@newcite\defconstamend{A Constitutional amendment, BB R. 11}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@const
+    \expandafter\protected@xdef\csname ic@#1\endcsname{%
+	\@capnext the
+	\expandafter\bb@numtotxt\expandafter{\bb@kv@number}
+	Amendment%
+    }%
+    \bb@const@part{#1}{amendment}%
+}
+%
+% Other Constitution parts.
+\bb@newcite\defconst{Citation to a constitution, BB R. 11}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@const
+    \bb@ifset\bb@kv@name\relax{%
+	\PackageWarning\bb@pkgname{%
+	    Constitution citation requires "name" argument
+	}%
+	\let\bb@kv@name\@empty
+    }%
+    \bb@const@part{#1}%
+}
+\def\bb@statutory@pages#1{%
+    \@namedef{idc@#1}{%
+        \@test \ifx\@this@page\@last@page \fi{%
+            \bb@citeguts{\@capemph{id.}}\@bb@dottrue
+        }{%
+            \csname sc@#1\endcsname
+        }%
+    }%
+    \expandafter\protected@xdef\csname pc@#1\endcsname##1{%
+        \bb@ifset\bb@kv@page{%
+            \noexpand\bb@statutory@pages@join{\bb@kv@page}{##1}%
+        }{\noexpand\@format@pageno{##1}}%
+    }%
+    \edef\reserved@a{%
+        \noexpand\def\expandafter\noexpand\csname sc@#1\endcsname{%
+            \expandafter\noexpand\csname fc@#1\endcsname
+        }%
+    }\reserved@a
+}
+\def\bb@statutory@pages@join#1#2{%
+    \bb@statutory@pages@join@{#1}\@nil#2\@nil/\@stop
+}
+\def\bb@statutory@pages@join@#1#2\@nil/#3\@stop{%
+    \@ifempty{#3}{%
+        \bb@statutory@pages@join@@{#1}#2\@stop
+    }{%
+        \bb@statutory@pages@join@@@{#1}#3\@stop
+    }%
+}
+\def\bb@statutory@pages@join@@#1\@nil#2\@stop{%
+    \@format@pageno{#1, #2}%
+}%
+\def\bb@statutory@pages@join@@@#1#2\@nil/\@stop{%
+    \@format@pageno{#1/#2}%
+}
+\def\bb@const@part#1{%
+    \bb@ifset\bb@kv@state\relax{\def\bb@kv@state{U.S.}}%
+    \bb@statutory@pages{#1}%
+    \expandafter\protected@xdef\csname ic@#1\endcsname{%
+        \bb@citeguts{\noexpand\@capnext \bb@kv@name}%
+    }%
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\if@bb@inline
+		\expandafter\noexpand\csname ic@#1\endcsname
+	    \noexpand\else
+		\noexpand\bb@fn@const{%
+		    \bb@kv@state\space % State, and space
+		    Const.%
+		}\space
+		\bb@ifset\bb@kv@origyear{of \bb@kv@origyear, }{}%
+                \bb@pageordefault{}{%
+                    \bb@ifset\bb@kv@page{%
+                        \@expand\@format@pageno\bb@kv@page i%
+                    }{}%
+                }%
+	    \noexpand\fi
+	}%
+	\noexpand\bb@invis@inline
+	\the\bb@param@parens
+    }%
+}
+%
+% Foreign constitution
+\bb@newcite\defforeignconst{A foreign constitution, BB R. 20.4}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@const
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@kv@name\space[Constitution]%
+	    \bb@ifset\bb@kv@page{ \bb@kv@page}{}%
+	    \bb@maybepage{ }%
+	}%
+	\bb@ifset\bb@kv@country{%
+	    \bb@addparen\bb@paren@country{\bb@kv@country}%
+	}{}%
+	\noexpand\bb@invis@inline
+	\the\bb@param@parens
+    }%
+}
+%
+% Statute in a code
+\bb@newcite\defstatcode{A statute in a code, BB R. 12.3}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@statute
+    \bb@statutory@pages{#1}
+    \@bb@abbrev@ustrue
+    \@expand\bb@abbrev@name{\bb@kv@rep}i{\def\bb@kv@rep}%
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \bb@ifset\bb@kv@name{\noexpand\@capnext\bb@kv@name, }{}%
+	    \bb@ifset\bb@kv@vol{\noexpand\@capnext\bb@kv@vol\space}{}%
+	    \noexpand\bb@fn@statute{\bb@kv@rep} %
+            \bb@pageordefault{}{%
+                \bb@ifset\bb@kv@page{%
+                    \@expand\@format@pageno\bb@kv@page i%
+                }{}%
+            }%
+	}%
+        \bb@ifset\bb@kv@year{%
+            \bb@addparen\bb@paren@date{%
+                \bb@param@optspc\bb@kv@publisher\bb@kv@year
+            }%
+        }%
+	\noexpand\did@full@cite{#1}%
+	\the\bb@param@parens
+	\noexpand\bb@set@title{\bb@kv@vol/\bb@kv@rep}%
+	\bb@ifset\bb@kv@name{\noexpand\@bb@inlcommatrue}{}%
+    }%
+    \expandafter\protected@xdef\csname sc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\bb@if@title{\bb@kv@vol/\bb@kv@rep}{}{%
+                \bb@ifset\bb@kv@vol{\noexpand\@capnext\bb@kv@vol\space}{}%
+                \noexpand\bb@fn@statute{\bb@kv@rep} %
+            }%
+            \bb@pageordefault{}{%
+                \bb@ifset\bb@kv@page{%
+                    \@expand\@format@pageno\bb@kv@page i%
+                }{}%
+            }%
+	}%
+	\noexpand\bb@set@title{\bb@kv@vol/\bb@kv@rep}%
+    }%
+}
+%
+% Statute in session laws
+\bb@newcite\defstatsess{A statute in session laws, BB R. 12.4}{%
+    \bb@param@set{#2}%
+    \bb@citetype{#1}\bb@type@statute
+    \bb@statutory@pages{#1}
+    \bb@ifset\bb@kv@name\relax{%
+	\bb@checkfulldate\bb@kv@year
+	\protected@edef\bb@kv@name{Act of \bb@kv@year}%
+	\expandafter\bb@getyear\expandafter{\bb@kv@year}{\def\bb@kv@year}%
+    }%
+    \bb@ifset\bb@kv@vol\relax{\let\bb@kv@vol\bb@kv@year}%
+    \bb@ifset\bb@kv@year{%
+	\@expandtwoargs\in@\bb@kv@year{%
+	    \bb@ifset\bb@kv@name\bb@kv@name\relax,
+	    \bb@ifset\bb@kv@vol\bb@kv@vol\relax,
+	    \bb@ifset\bb@kv@rep\bb@kv@rep\relax,
+	}%
+	\ifin@ \bb@undefine\bb@kv@year \fi
+    }\relax
+    \expandafter\protected@xdef\csname fc@#1\endcsname{%
+	\bb@citeguts{%
+	    \noexpand\@capnext\bb@kv@name,
+	    \bb@ifset\bb@kv@number{Pub. L. No.~\bb@kv@number}{%
+		ch.~\bb@kv@chapter
+	    },
+            \bb@this@opt@as@pageno
+	    \bb@ifset\bb@kv@vol\bb@kv@vol\bb@kv@year \space
+	    \bb@kv@rep \space
+            \bb@pageordefault{}{%
+                \bb@ifset\bb@kv@page{%
+                    \@expand\@format@pageno\bb@kv@page i%
+                }{}%
+            }%
+	}%
+	\noexpand\bb@statsess@chkopt
+	\noexpand\did@full@cite{#1}%
+	\bb@ifset\bb@kv@year{%
+	    \bb@addparen\bb@paren@date{\bb@param@optspc\bb@kv@publisher\bb@kv@year}%
+	}{%
+	    \bb@ifset\bb@kv@publisher{%
+		\bb@addparen\bb@paren@date{\bb@kv@publisher}%
+	    }{}%
+	}%
+    }%
+}
+\def\bb@statsess@chkopt{%
+    \ifx\@this@page\relax
+	\ifx\@this@opt\relax\else \bb@statsess@opterr \fi
+    \else
+	\ifx\@this@opt@relax      \bb@statsess@opterr \fi
+    \fi
+}
+\DeclareRobustCommand\bb@this@opt@as@pageno{%
+    \ifx\@this@opt\relax\else
+        \expandafter\@format@pageno\expandafter{\@this@opt},\space
+    \fi
+}
+\def\bb@statsess@opterr{%
+    \PackageError\bb@pkgname{%
+	Missing option or page number in session law citation
+    }{%
+	A pin cite to a statute in session laws must include\MessageBreak
+	both a section number and a page number. The section\MessageBreak
+	number is placed in the optional argument.
+    }%
+}
+%
+% This utility macro turns on the flag saying that a case was full-cited. The
+% flag itself contains the most recent footnote number of the citation, or zero
+% if it was cited in text but never in footnote.
+\def\did@full@cite#1{%
+    \if@bb@in@toa\else
+	\ifnum\bb@citelevel<\tw@
+	    \expandafter\did@full@cite@\csname dfc@#1\endcsname
+	\fi
+    \fi
+}
+%
+% In law reviews, full citations are global events that affect everyone. In
+% legal memoranda, they are local events (e.g., within a footnote).
+\@test \if@bb@review \fi {
+    \def\did@full@cite@#1{%
+	\if@bb@note   \global\mathchardef#1\c@footnote
+	\else         \ifx#1\relax \global\let#1\z@ \fi
+	\fi
+    }
+}{
+    \def\did@full@cite@#1{%
+	\if@bb@note   \mathchardef#1\c@footnote
+	\else         \ifx#1\relax \let#1\z@ \fi
+	\fi
+    }
+}
+\def\bb@name@comma{\if@bb@name\bb@font@comma\fi}
+\def\bb@font@comma{\ifdim\lastkern>\z@\unkern\fi, }
+%
+% These tell us what not to put as the single-party citation.
+%
+\def\NotMainParty#1{\expandafter\let\csname nocite@#1\endcsname\NotMainParty}
+\NotMainParty{People}
+\NotMainParty{United States}
+\NotMainParty{Commonwealth}
+\NotMainParty{State}
+% Later, when we read in tables, we'll add in a few more.
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% CASE STATE VARIABLES
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% List of state variables
+\def\bb@state@vars{}
+% Initiate a new state variable.
+\newcommand*\bb@statevar[1]{%
+    \expandafter\ifx\csname \expandafter\@gobble\string#1\endcsname\relax\else
+	\PackageError\bb@pkgname{%
+	    State variable \noexpand#1 already defined.\MessageBreak
+	    Redefining it
+	}{}%
+    \fi
+    \let#1\relax
+    \g@addto@macro\bb@state@vars{\do#1}%
+}
+% Registers for the last case and page number cited. This allows us to do id.
+\bb@statevar\@last@case
+\bb@statevar\@last@page
+\bb@statevar\@this@case
+\bb@statevar\@this@page
+\bb@statevar\@last@inline
+\bb@statevar\@this@opt
+\bb@statevar\@this@vol
+\bb@statevar\@this@fin
+%
+% Use \@this@page, and also set \@bb@dottrue depending on the page number
+% ending.
+\def\bb@use@page{%
+    \ifx\@this@page\relax\else
+	\@this@page
+	\expandafter\@ifendswithdot\@this@page\@nil.\@nil\@stop\@bb@dottrue
+    \fi
+}
+%
+% Use \@this@vol, appending a space following it.
+\def\bb@usevol{\ifx\@this@vol\relax\else\@this@vol\space\fi}
+%
+% Titles for statutes and regulations (for purposes of minimizing repetition).
+\bb@statevar\@last@title
+\bb@statevar\@this@title
+\def\bb@set@title#1{\def\@last@title{#1}}
+\def\bb@if@title#1{%
+    \def\@this@title{#1}%
+    \ifx\@this@title\@last@title  \expandafter\@firstoftwo
+    \else                         \expandafter\@secondoftwo  \fi
+}
+%
+% Conditionals for managing properties of the citation:
+%
+% Whether a letter needs to be capitalized ASAP. This is turned on only in the
+% sentence citation form. It is turned off immediately upon printing a citation
+% party, and the signals use the \@capnext macro to capitalize a single letter
+% and then turn it off.
+\newif\if@bb@cap
+\def\bb@nocap{\@bb@capfalse}
+%\@test \if@bb@html \fi{
+    %\def\@capfont#1#2{\immediate\write16{No fonts in HTML!}\@capnext#2}
+%}{
+    \def\@capfont#1#2{\if@bb@cap\bb@nocap#1{\@@capnext#2}\else#1{#2}\fi}
+%}
+\DeclareRobustCommand\@capnext{\if@bb@cap\bb@nocap\expandafter\@@capnext\fi}
+\def\@@capnext#1{%
+    \@ifonechar{#1}{%
+	\ifx#1\textsection
+	    \@eatafi{\@skipafi{\@@@capnext{Section}\textsection}}%
+	\else
+	    \ifx#1\textparagraph
+		\@skipafi{\@skipafi{\@@@capnext{Paragraph}\textparagraph}}%
+	    \else \MakeUppercase{#1}\fi
+	\fi
+    }{%
+	{\@@capnext #1}%
+    }%
+}
+\def\@@@capnext#1#2#3{#1\ifx#2#3s\else#3\fi}
+%
+% Conditional for whether or not we are doing an inline citation. This is used
+% to determine, for instance, whether to abbreviate party names.
+\newif\if@bb@inline \@bb@inlinefalse
+%
+% Conditional for whether or not the last thing printed was a dot. This is used
+% to eliminate double-dotting after abbreviations and such.
+\newif\if@bb@dot
+\def\bb@dot@after@group{%
+    \if@bb@dot\aftergroup\@bb@dottrue\else\aftergroup\@bb@dotfalse\fi
+}
+%
+% Conditional that is true if we're writing a sentence, rather than a clause.
+\newif\if@bb@sent
+%
+% Conditional that is false if we're doing an inline followup cite (so don't
+% show the case name).
+\newif\if@bb@name \@bb@nametrue
+%
+% Conditional for whether to put the extra comma at the end of an inline full
+% citation.
+\newif\if@bb@inlcomma
+%
+% Counter for citation nesting level. This allows for citations inside citations
+% (e.g., in parentheticals).
+\newcount\bb@citelevel
+%
+% Macros for starting and ending citations.
+\def\bb@start@cite{%
+    \ifnum\bb@citelevel>\z@ \begingroup \fi
+    \advance\bb@citelevel\@ne
+    \let\@last@sig\relax \let\@last@sigt\relax
+    \let\@this@sig\relax \let\@this@sigt\relax
+    \let\@this@opt\relax \let\@this@vol\relax
+    \let\@this@fin\relax
+    \@bb@dotfalse
+    \@bb@inlcommafalse % And by default no trailing comma for inlines
+    \bb@parens{}% Clear the parenthetical list
+}
+\def\bb@end@cite{%
+    \advance\bb@citelevel\m@ne
+    \ifnum\bb@citelevel>\z@
+	\if@bb@inlcomma \aftergroup\@bb@inlcommatrue \fi
+	\if@bb@dot \aftergroup\@bb@dottrue \fi
+	\endgroup
+    \fi
+}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% USER CITATION FUNCTIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Displays a case citation. The \sentence form makes a sentence; the \clause
+% form makes a clause.
+\def\sentence#1{%
+    \bb@checkreviewcite
+    \bb@start@cite
+    \@bb@captrue\@bb@senttrue
+    \bb@cites#1;\bb@cites;%
+    \global\futurelet\@let@token\bb@end@sentence
+}
+\def\bb@end@sentence{%
+    \bb@end@cite
+    \@test \if@bb@inline \fi{}{%
+	\@test \ifx\@let@token.\fi{%
+	    \if@bb@dot\@re@dot@space\expandafter\@gobble\fi
+	}{}%
+    }%
+}
+\@test \if@bb@review \fi {%
+    \def\bb@checkreviewcite{%
+	\if@bb@in@toa\else\if@bb@note\else
+	    \PackageWarning\bb@pkgname{%
+		Citations in law review articles must be footnotes.\MessageBreak
+		This occurred at
+	    }%
+	\fi\fi
+    }
+    \def\note#1{%
+	\if@bb@note
+	    \PackageWarning\bb@pkgname{%
+		Cannot create footnote citation inside a footnote
+	    }%
+	    \sentence{#1}.%
+	\else
+	    \footnote{\sentence{#1}.}\expandafter\@gobble@dot
+	\fi
+    }%
+}{ % Legal memoranda
+    \let\bb@checkreviewcite\relax
+    \def\note#1{%
+	\PackageWarning\bb@pkgname{%
+	    No footnote citations in court documents or\MessageBreak
+	    memoranda permitted. Converting to sentence,\MessageBreak
+	    which will probably be incorrect,
+	}%
+	\sentence{#1}.%
+    }%
+}
+\def\Compare#1#2{%
+    \bb@checkreviewcite
+    \bb@start@cite
+    \@bb@capfalse\@bb@senttrue
+    \bb@fn@sig{Compare} % Explicit space
+    \bb@cites@cmp#1;\bb@cites@cmp;%
+    , \bb@fn@sig{with} % Explicit space
+    \bb@cites@cmp#2;\bb@cites@cmp;%
+    \bb@killid
+    \global\futurelet\@let@token\bb@end@sentence
+}
+\def\clause#1{%
+    \bb@checkreviewcite
+    \bb@start@cite
+    \@bb@capfalse\@bb@sentfalse
+    \bb@cites#1;\bb@cites;%
+    \global\futurelet\@let@token\bb@end@clause
+}
+\def\compare#1#2{%
+    \bb@checkreviewcite
+    \bb@start@cite
+    \@bb@capfalse\@bb@sentfalse
+    \bb@fn@sig{compare} % Explicit space
+    \bb@cites@cmp#1;\bb@cites@cmp;%
+    , \bb@fn@sig{with} % Explicit space
+    \bb@cites@cmp#2;\bb@cites@cmp;%
+    \bb@killid
+    \global\futurelet\@let@token\bb@end@clause
+}
+\def\bb@end@clause{%
+    \bb@end@cite
+    \@test \if@bb@inline \fi{}{%
+	\@test \ifx\@let@token.\fi{%
+	    \if@bb@dot\@re@dot@space\expandafter\@gobble\fi
+	}{}%
+    }%
+}
+%
+% Kills the memory of the last cited case and page, so that an id. citation will
+% not appear.
+\def\bb@killid{\let\@last@case\relax\let\@last@page\relax}
+\let\killid\bb@killid
+%
+% Kills the memory of a full citation of a case, so that the case will be
+% full-cited again.
+\def\fullcite#1{\expandafter\let\csname dfc@#1\endcsname\relax}
+%
+% Forces a short citation.
+\def\nofullcite#1{\did@full@cite{#1}}
+%
+% Forces display of the title of a statute (i.e., not just the section number).
+\def\fulltitle{\let\@last@title\relax}
+%
+% Invisibly adds a citation to the table of authorities. Useful if you're
+% implicitly referencing a source without citing it for some reason.
+\def\addtotoa#1{\bb@addtotoa{#1}}
+%
+%
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% INTERNAL CITATION FUNCTIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+% Iterates through the list of cases and performs citations.
+%
+% The format of the argument is:
+% \bb@cites [citation]; [citation]; ... [citation];\bb@cites;
+% The last fragment is added by \sentence or \clause; it tells \bb@cites to
+% stop.
+\def\bb@cites#1#2;{%
+    \ifx\bb@cites#1% If we've reached the end of the line
+	% If the last signal is still \relax, then there was only one citation
+	% in this line. Otherwise, we kill the id.
+	\ifx\@last@sig\relax\else \@this@fin \fi
+    \else
+	% We first set the last signal to the current (from last time!) signal.
+	% This is correct on the first iteration, as the current signal is
+	% initialized to \relax. Additionally, it ensures that \@last@sig=\relax
+	% if there was only one item cited.
+	\let\@last@sig\@this@sig \let\@last@sigt\@this@sigt
+	\bb@split@signal{#1#2}\bb@citesig
+	\expandafter\bb@cites
+    \fi
+}
+%
+% Like \bb@cites, except for compare...with citations. This differs primarily
+% because (1) there are commas, rather than semicolons, between elements, and
+% (2) there is an "and" before the last element.
+\def\bb@cites@cmp#1#2;#3#4;{%
+    \def\bb@cites@cmp@{\bb@cites@cmp{#3}#4;}%
+    \ifx#3\bb@cites@cmp\@empty
+	\let\bb@cites@cmp@\@empty
+    \fi
+    \ifx\@this@sig\relax \def\@this@sig{compare}\else
+	, % Comma separates elements
+	\ifx#3\bb@cites@cmp\@empty
+	    \bb@fn@sig{and} % And separates penultimate element from ultimate
+	\fi
+    \fi
+    \@split{ (}{#1#2}\bb@citeparens % ) Pull off parentheticals
+    \bb@cites@cmp@
+}
+%
+% This command is called after \bb@split@signal has set \@this@sig. The argument
+% is everything for the citation but the signal. This macro draws the
+% appropriate punctuation between signals as well as the signal itself.
+\def\bb@citesig#1{%
+    % If there was a previous signal, then there was a previous case citation
+    % (because \@bb@start resets the last signals). So we need to add a
+    % semicolon or period separator. The rule is that we add a period between
+    % differing sigt, and a semicolon for the same. Differing sigt is disallowed
+    % when \@bb@senttrue is on (i.e., sigt must be the same throughout one
+    % sentence).
+    \ifx\@last@sig\relax\else
+	\ifx\@this@sigt\@last@sigt;
+	\else\if@bb@sent
+	    \if@bb@dot\@re@dot@space\else.\fi\space\@bb@captrue
+	\else; % BB rule 1.3, last sentence
+	\fi\fi
+    \fi
+    % Show the signal itself, unless it was the same as the previous one.
+    \ifx\@this@sig\@last@sig\else \bb@showsig \fi
+    %
+    % Now pull off parentheticals
+    \@split{ (}{#1}\bb@citeparens % ) Pull off parentheticals
+}
+% Split off parentheticals into the token list, and then make the citation.
+\def\bb@citeparens#1#2{%
+    \bb@parens{}%
+    \@ifempty{#2}{}{\bb@addparens{\bb@paren@cite}{(#2}}% )
+    % Split the citation into work and page number, by the word "at".
+    \@split{ at }{#1}\bb@citeopt
+}
+%
+% Searches for an optional argument on the citation name. If it's found, sets
+% \@this@opt to it.
+\def\bb@citeopt#1#2{\bb@citeopt@#1[]\@stop{#2}}
+\def\bb@citeopt@#1[#2]#3\@stop#4{%
+    \@ifempty{#2}{\let\@this@opt\relax}{\def\@this@opt{#2}}%
+    \@split{ }{#1}\bb@citevol{#4}%
+}
+%
+% Splits off a volume number from a citation.
+\def\bb@citevol#1#2#3{%
+    \@ifempty{#2}{%
+	\let\@this@vol\relax
+	\bb@citeone{#1}{#3}%
+    }{%
+	\def\@this@vol{#1}%
+	\bb@citeone{#2}{#3}%
+    }%
+}
+%
+% This executes a single citation. The first argument is the citation name; the
+% second is the page number, if any.
+\def\bb@citeone#1#2{%
+    \def\@this@case{#1}%
+    \@bb@dotfalse % With a new citation, by default it has no ending dot
+    % Set \@this@page to the page number, or \relax if there isn't one
+    \@ifempty{#2}{\let\@this@page\relax}{%
+	\@ifundefined{pc@#1}{%
+	    \protected@edef\@this@page{\@format@pageno{#2}}%
+	}{%
+	    \protected@edef\@this@page{\@nameuse{pc@#1}{#2}}%
+	}%
+    }%
+    % Add the citation to the index
+    \leavevmode % Just in case
+    \@ifundefined{tc@\@this@case}\relax
+	{\@expand{\bb@addtotoa}{\@this@case}{i}}\nobreak
+    \bb@docite
+    % Record the citation and page number.
+    % Set the last case and page. They are always set, so that if the next item
+    % in this citation matches, it is cited as id. If there were multiple items
+    % in this citation, the last case and page will be killed at the end of the
+    % run (in \bb@cites).
+    \let\@last@case\@this@case
+    \let\@last@page\@this@page
+    % Show the parentheticals. Done after setting last@case and such, so that it
+    % will know about the most recent case cited.
+    {\@no@dot@space\bb@showparens\bb@dot@after@group}%
+    % No capitalization
+    \bb@nocap
+}
+%
+% Draws the citation or id form, selecting as appropriate.
+\def\bb@docite{%
+    \ifx\@last@case\@this@case
+	\if@bb@inline \@skipafi{\@skipafi\@secondoftwo}%
+	\else         \@skipafi{\@skipafi\@firstoftwo}\fi
+    \else \expandafter\@secondoftwo \fi
+	% If the last case and this case are the same, and this is not an inline
+	% citation, then use the id form.
+    {%
+	\bb@note@advance@id
+	\@id@case
+    }%
+	% Otherwise, set the last case and page to this case and page, and draw
+	% the citation. If \dfc@[label] exists, then do the short cite;
+	% otherwise do the long cite.
+    {%
+	\bb@note@advance % For law reviews, add one citation to the current note
+	\if@bb@in@toa
+	    \edef\reserved@a{\@ifundefined{lc@\@this@case}{fc}{lc}}%
+	\else
+	    \@ifundefined{dfc@\@this@case}{\def\reserved@a{fc}}{%
+		\@ifundefined{sc@\@this@case @supra}{%
+		    \if@bb@note
+			\@tempcnta\csname dfc@\@this@case\endcsname
+			\advance\@tempcnta 5\relax
+			\edef\reserved@a{%
+			    \ifnum\@tempcnta<\c@footnote fc\else sc\fi
+			}%
+		    \else
+			\def\reserved@a{sc}%
+		    \fi
+		}{%
+		    \def\reserved@a{sc}%
+		}%
+	    }%
+	\fi
+        \@ifundefined{\reserved@a @\@this@case}{%
+            \if@bb@missingcites\else
+                \PackageError\bb@pkgname{%
+                    \reserved@a @\@this@case\space undefined%
+                }\@ehc
+            \fi
+	    \textbf{\@this@case\bb@maybepage{ at }}%
+        }{%
+            \csname \reserved@a @\@this@case\endcsname
+        }%
+	\@ifundefined{sc@\@this@case @supra}{%
+	    \@ifundefined{dfc@\@this@case}\relax{\did@full@cite\@this@case}%
+	}\relax
+	\ifx\@this@fin\@empty \let\@this@fin\bb@killid \fi
+    }%
+    \ifx\@this@fin\relax \let\@this@fin\@empty \fi
+}
+%
+% Displays Id. [at pageno]. Capitalizes using the \@capnext macro.
+\def\@id@case{%
+    \@ifundefined{idc@\@this@case}{%
+	\bb@citeguts{%
+	    \ifx\@this@vol\relax\else \@this@vol\bb@nocap\space \fi
+	    \@capemph{id.}%
+	    \@test \ifx\@this@page\relax \fi
+	    {\@firstoftwo}%
+		{\@test \ifx\@this@page\@last@page \fi}%
+	    {\@bb@dottrue}{~\bb@page@atorsect\bb@use@page}%
+	}%
+    }{\@nameuse{idc@\@this@case}}%
+}
+%
+% Write the word ``at'' unless the page number starts with a paragraph or
+% section mark (or other section indicator).
+\DeclareRobustCommand\bb@page@atorsect{%
+    \expandafter\bb@page@atorsect@\@this@page\@stop
+}
+\def\bb@page@atorsect@#1#2\@stop{%
+    \ifx#1\textsection\else\ifx#1\textparagraph\else at \fi\fi
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% INLINE CITATIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Makes an inline case citation.
+\def\bb@inline#1#2{%
+    %
+    % RULES ABOUT INLINE CITATIONS AND ID
+    %
+    % If the inline citator is the same as the last cited case, then we
+    % do nothing. Otherwise the last cited case is killed so there is no
+    % confusion.
+    %
+    % We only deal with last citations at the top level of citation, so that
+    % inline cites within a citation (e.g., a parenthetical) do not destroy
+    % outer citations. E.g., Case 1 (inlining case 2); Case 1: the second Case 1
+    % should be cited as id., and thus should not be destroyed by case 2.
+    \@bb@invis@inlinefalse
+    \ifnum\bb@citelevel=\z@
+	\let\tmp@last@case\@last@case
+	\let\tmp@last@page\@last@page
+	\bb@killid
+    \fi
+    \@bb@inlinetrue
+    \bb@start@cite
+    #2% Macros distinguishing uppercase and lowercase inlines
+    \@split{ at }{#1}\bb@citeopt
+    \bb@end@cite
+    \@bb@inlinefalse
+    \if@bb@invis@inline\else \let\@last@inline\@this@case \fi
+    \ifnum\bb@citelevel=\z@
+	\bb@inline@post
+    \fi
+    \futurelet\@let@token\bb@end@inline
+}
+\@test \if@bb@review \fi {
+    \def\bb@inline@post{%
+	\if@bb@note
+	    \ifx\tmp@last@case\@this@case
+		\let\@last@case\tmp@last@case
+		\let\@last@page\tmp@last@page
+	    \else
+		\if@bb@invis@inline
+		    \let\@last@case\tmp@last@case
+		    \let\@last@page\tmp@last@page
+		\else
+		    \let\@last@case\relax
+		    \let\@last@page\relax
+		\fi
+	    \fi
+	\else
+	    \let\@last@case\tmp@last@case
+	    \let\@last@page\tmp@last@page
+	\fi
+    }
+}{ % Legal memo
+    \def\bb@inline@post{%
+	\ifx\tmp@last@case\@this@case
+	    \let\@last@case\tmp@last@case
+	    \let\@last@page\tmp@last@page
+	\else
+	    \if@bb@invis@inline
+		\let\@last@case\tmp@last@case
+		\let\@last@page\tmp@last@page
+	    \else
+		\let\@last@case\relax
+		\let\@last@page\relax
+	    \fi
+	\fi
+    }
+}
+\def\inline#1{\bb@inline{#1}{\@bb@capfalse\@bb@sentfalse}}
+\def\Inline#1{\bb@inline{#1}{\@bb@captrue\@bb@senttrue}}
+\newif\if@bb@invis@inline
+\def\bb@invis@inline{\if@bb@inline \@bb@invis@inlinetrue \fi}
+\def\bb@full@inline{%
+    \if@bb@inline
+	\let\tmp@last@case\@this@case
+	\let\tmp@last@page\@this@page
+    \fi
+}
+%
+\def\bb@end@inline{%
+    \@test \ifcat\noexpand\@let@token\space\fi{%
+	\if@bb@inlcomma,\fi
+    }{%
+	\@test \ifx\@let@token.\fi{%
+	    \if@bb@dot\@re@dot@space\expandafter\@gobble\fi
+	}{}%
+    }%
+}
+%
+% This convention allows us to make ``follow-up'' citations that come directly
+% after an inline citation, without rewriting the party names.
+%   Note that the ``short-cite'' form of this macro will never be called.
+\def\fc@inline{%
+    \bb@noname
+    \let\@this@case\@last@inline
+    \bb@note@advance@undo % This note does not count
+    \bb@docite
+    \@bb@nametrue
+}
+\@test \if@bb@review \fi {
+    \def\bb@noname{%
+	\ifnum\bb@note@cites>\@ne \@bb@namefalse \fi
+    }
+}{
+    \let\bb@noname\@bb@namefalse
+}
+
+\expandafter\let\csname fc@*\endcsname\fc@inline
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% PAGE NUMBERS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% This package accepts page numbers in many forms. A page number is made up of a
+% series of comma-separated parts, each having one of the following forms:
+%
+% Star page numbers: any number of stars, followed by a regular page number
+%   E.g., **123-126
+%
+% Section/paragraph page numbers:
+%   Start with S or P
+%   Section number is separated from subsection by a slash
+%   For ranges, subsection always goes after the slash
+%   E.g., S 123/a-/b2
+%   Bare numbers in the comma list are assumed thereafter to be section numbers,
+%   not page numbers
+%
+% Ordinary page numbers: 123-127
+%   May include notes: 123 note 456
+%   May include ampersand-notes: 123 & note 456
+%   May be preceded by the word "at"
+%
+% This function takes a page number and then formats it nicely. It properly
+% handles page ranges.
+\def\PageNumber#1{\@format@pageno{#1}}
+\def\@format@pageno#1{%
+    \@ifnotempty{#1}{\@fmtpg@split#1,\@stop}{\@fmtpg@pagenumber{}{}}%
+}
+%
+% The state is a three-part item. The first part is the macro to run for
+% whatever page type we are on. The second part is what to print out before
+% processing the page number, if the page number is of a new type. The third
+% part is what to print out before processing the page number, if the page
+% number is not of a new type. There may be trailing matter in the state, to be
+% printed out in either case.
+\def\@fmtpg@split#1,#2\@stop#3{%
+    \@ifempty{#1}{%
+        \@ifempty{#2}{\@fmtpg@singularstate}{\@fmtpg@split#2\@stop{#3}}%
+    }{%
+        \@fmtpg@one#1\@stop{#3}{%
+            \@ifempty{#2}{\@fmtpg@singularstate}{\@fmtpg@split#2\@stop}%
+        }%
+    }%
+    \@fmtpg@done
+}
+\def\@fmtpg@done{\iffalse\@fmtpg@done\fi}
+\def\@fmtpg@comma#1{\ifx\@fmtpg@done#1\else, \fi#1}
+% Processes the state when a singular form should be used.
+\def\@fmtpg@singularstate#1{%
+    \@secondofthree#1%
+}
+%
+% Processes a single page number record. #3 is the internal state that is
+% received. #4 is a callback that must be run at the end of processing, to
+% continue the comma splitting function.
+%
+% The individual page number is split into two arguments, to consume any leading
+% spaces, and also to conveniently identify the type of page number.
+\def\@fmtpg@one#1#2\@stop#3#4{%
+    \@ifletter{#1}{%
+        \@fmtpg@letter#1#2 \@stop{#3}{#4}%
+    }{%
+        \@ifdigit{#1}{%
+            \@fmtpg@number{#1#2}{#3}{#4}%
+        }{%
+            \@fmtpg@unknown{#1}{#2}{#3}{#4}%
+        }%
+    }%
+}
+%
+% Other than a letter or number, it can start with:
+% - An exclamation point, indicating that it should be treated as a bare number
+%   (following whatever number form followed previously)
+% - A slash, indicating that it is a subsection number
+% Anything else, and it is assumed to be a mistake and printed out without any
+% formatting.
+\def\@fmtpg@unknown#1#2#3#4{%
+    \@test \ifx!#1\fi {%
+        \@fmtpg@number{#2}{#3}{#4}%
+    }{%
+        \@test \ifx/#1\fi {%
+            \@fmtpg@subsection{#2}{#3}{#4}%
+        }{%
+            \protect\@fmtpg@unexpectedchar{#1#2}%
+            \@fmtpg@plain{#1#2}{#3}{#4}%
+        }%
+    }%
+}
+\def\@fmtpg@plain#1#2#3{%
+    \@fmtpg@singularstate{#2}%
+    #1% Output the page number as specified
+    #3{\@fmtpg@pagenumber{}{}\@fmtpg@comma}%
+}
+\def\@fmtpg@unexpectedchar#1{%
+    \PackageWarning\bb@pkgname{%
+        Page number `#1' starts with an unexpected character.\MessageBreak
+        If it is meant to be a page number, then precede it\MessageBreak
+        with the `!' symbol. It appeared%
+    }%
+}
+%
+% Formats number that looks like a bare number. #1 is the number, #2 is the
+% state, and #3 is the callback.
+\def\@fmtpg@number#1#2#3{%
+    \@fmtpg@fromstate#2\@stop{#1}{#3}%
+}%
+%
+% This macro is run if we have a stored state and received a bare number. This
+% means that (1) we need to use the plural form stored in the state, and (2) we
+% need to execute the macro stored in the state.
+%
+% The state macro is called with two arguments: the text of the page number, and
+% the callback.
+\def\@fmtpg@fromstate#1#2\@stop#3#4{%
+    \@secondoftwo#2%
+    #1{#3}{#4}%
+}
+%
+% Formats an ordinary page number. #1 is the number, and #2 is the callback.
+%
+% This performs three searches to determine the type of ordinary page number:
+% - Ampersand (123 & n.456)
+% - Space (123 note 456)
+% Failing all of these, the page number is processed and emitted.
+%
+\def\@fmtpg@pagenumber#1#2{%
+    \@fmtpg@findamp#1&\@stop{#2}%
+}
+\def\@fmtpg@findamp#1&#2\@stop#3{%
+    \@ifempty{#2}{%
+	% No ampersand. See if it's a footnote page (123 n.456).
+        \@fmtpg@findpart#1 \@stop{#3}%
+    }{%
+        % If there is an ampersand, then we output the page number, output the
+        % ampersand, and process the remainder with the expectation that it is a
+        % letter-starting page reference (e.g., 123 n.5).
+	\@fmtpg@pgrange{#1}\space\protect\&\space
+        \@fmtpg@findamp@#2\@stop{#3}%
+    }%
+}
+\def\@fmtpg@findamp@#1&\@stop#2{%
+    \@fmtpg@subdiv#1 \@stop{#2}%
+}
+\def\@fmtpg@unexpectedafteramp#1{%
+    \PackageWarning\bb@pkgname{%
+        Page number `#1' follows an ampersand but is not a\MessageBreak
+        subdivision. It appeared%
+    }%
+}
+\def\@fmtpg@findpart#1 #2\@stop#3{%
+    \@fmtpg@pgrange{#1}% #1 is always a page number.
+    % We are looking to see if there is a footnote or other graphical material
+    % reference.
+    \@ifempty{#2}{%
+        % No subdivision, so just set up the next state.
+        #3{\@fmtpg@pagenumber{}{}\@fmtpg@comma}%
+    }{%
+	% Some sort of note.
+	\space
+        \@fmtpg@subdiv#2\@stop{#3}% Note: #2 already has a trailing space
+    }%
+}
+%
+% This is run when a subdivision is expected. The first character should be a
+% letter (indicating that it is a subdivision).
+\def\@fmtpg@subdiv#1#2 #3\@stop#4{%
+    \@ifletter{#1}{%
+        \@ifempty{#3}{%
+            % Subdivision name, with no number. Output the name, and run the
+            % callback.
+            \@fmtpg@divname{#1#2}{}%
+            #4{\@fmtpg@pagenumber{}{}\@fmtpg@comma}%
+        }{%
+            % Subdivision name, with a number.
+            \@fmtpg@drawdivision{#1#2}{#3}{\@fmtpg@nextsubdiv}{#4}%
+        }%
+    }{%
+        \protect\@fmtpg@unexpectedafteramp{#1#2}%
+        \@fmtpg@plain{#1#2}{\@gobble{}{}}{#3}%
+    }%
+}
+%
+% Draws a numbered division with names. #1 is the division name, #2 is the
+% number, #3 is the macro for the state, and #4 is the callback.
+\def\@fmtpg@drawdivision#1#2#3#4{%
+    \@fmtpg@ifrange#2-\@stop{%
+        \@fmtpg@divname{#1}\@fmtpg@plural
+        \@fmtpg@sectrange{#2}%
+        #4{#3{\@fmtpg@comma}{}}%
+    }{%
+        #4{#3{%
+                \@fmtpg@divname{#1}\@fmtpg@singular
+                \@fmtpg@sectrange{#2}\@fmtpg@comma
+            }{%
+                \@fmtpg@divname{#1}\@fmtpg@plural
+                \@fmtpg@sectrange{#2}%
+            }%
+        }%
+    }%
+}
+\def\@fmtpg@ifrange#1-#2\@stop#3#4{%
+    \@ifempty{#2}{%
+        \@fmtpg@ifrange@to#1 to \@stop{#3}{#4}%
+    }{\@fmtpg@ifrange@\@nil#2\@nil/\@stop{#3}{#4}}%
+}
+\def\@fmtpg@ifrange@#1\@nil/#2\@stop#3#4{%
+    \@ifempty{#2}{#3}{#4}%
+}
+\def\@fmtpg@ifrange@to#1 to #2\@stop#3#4{%
+    \@ifempty{#2}{#4}{#3}%
+}
+\def\@fmtpg@sectrange#1{%
+    \chop@space@then@run{#1}\@fmtpg@section
+}
+%
+\def\@fmtpg@letter#1 #2\@stop#3#4{%
+    \@ifempty{#2}{%
+        \protect\@fmtpg@nonumber{#1}%
+        \@fmtpg@plain{#1}{#3}{#4}%
+    }{%
+        \@fmtpg@singularstate{#3}%
+        \expandafter\@test\expandafter
+            \ifx\csname bb@t17@#1\endcsname\@fmtpg@at\fi
+            {\@fmtpg@at \@fmtpg@pagenumber{#2}{#4}}%
+            {\@fmtpg@drawdivision{#1}{#2}{\@fmtpg@nextdivision}{#4}}%
+    }%
+}
+\def\@fmtpg@nonumber#1{%
+    \PackageWarning\bb@pkgname{%
+        No number part was found in page number #1.\MessageBreak
+        If this is an ordinary page number, prefix it\MessageBreak
+        with `!'. This appeared%
+    }%
+}
+\def\@fmtpg@nextdivision#1#2{%
+    #2{\@fmtpg@nextsubdiv{%
+            , \@fmtpg@sectrange{#1}\@fmtpg@comma
+        }{%
+            , \@fmtpg@sectrange{#1}%
+        }%
+    }%
+}
+%
+% Formatting for a bare subsection is a little unusual, because it should be a
+% fairly rare inclusion in a page number. Specifically, it should only appear
+% after a listing of section numbers, and no further section numbers should
+% follow. Thus, the queued state is simply flushed and the section number is
+% printed.
+\def\@fmtpg@subsection#1#2#3{%
+    \@fmtpg@singularstate{#2}%
+    \bb@parenize{#1}%
+    #3{\@fmtpg@pagenumber{}{}\@fmtpg@comma}%
+}
+\def\@fmtpg@divname#1#2{%
+    \@ifundefined{bb@t17@#1}{%
+	\protect\@fmtpg@warngraph{#1}%
+	#1\space
+    }{%
+        \@ifempty{#2}{%
+            \@expand\chop@space{\csname bb@t17@#1\endcsname}{iii}%
+        }{%
+            \@expand{\@fmtpg@handlespc#2}{\csname bb@t17@#1\endcsname}{ii}%
+        }%
+    }%
+}
+\def\@fmtpg@handlespc#1#2{%
+    \@expand\@fmtpg@handlespc@{#1{#2}}{ii}%
+}
+\def\@fmtpg@handlespc@#1{\@fmtpg@handlespc@@#1\@mark. \@mark.\@stop}
+\def\@fmtpg@handlespc@@#1 \@mark.#2\@stop{%
+    \@ifempty{#2}{\@fmtpg@handlespc@@@#1}{#1~}%
+}
+\def\@fmtpg@handlespc@@@#1\@mark.{#1}
+\def\@fmtpg@plural#1{\@thirdofthree#1}
+\def\@fmtpg@singular#1{\@secondofthree#1}
+\def\@fmtpg@warngraph#1{%
+    \PackageWarning\bb@pkgname{%
+	Word `#1' is not defined in Bluebook Table 17,\MessageBreak
+	but it is being used as a graphical element.\MessageBreak
+	This may mean nothing, or it may indicate a typo.\MessageBreak
+	It appeared}%
+}
+% Formats a section number. There are seven possibilities, two without dashes
+% and five with.
+\def\@fmtpg@section#1{\@fmtpg@sec@dash#1--\@stop}%
+\def\@fmtpg@sec@dash#1#2-#3-#4\@stop{%
+    \@ifempty{#3}{%
+        \@fmtpg@sec@slash#1#2//\@stop{\@fmtpg@sec@one}%
+    }{%
+        \@fmtpg@sec@slash#1#2//\@stop{\@fmtpg@sec@dash@{#3}}%
+    }%
+}
+\def\@fmtpg@sec@slash#1/#2/#3\@stop#4{#4{#1}{#2}}
+%
+% This function takes care of the two cases of section ranges without dashes:
+% 123/a        Subsection
+% 123          Section
+\def\@fmtpg@sec@one#1#2{#1\bb@parenize{#2}}
+\def\@fmtpg@sec@dash@#1#2#3{%
+    \@fmtpg@sec@slash#1//\@stop{\@fmtpg@sec@dash@@{#2}{#3}}%
+}
+%
+% This function takes care of section ranges with dashes:
+% 123-124      Range of subsections
+% 123-124/b    Section to section/subsection
+% 123/a-/b     Range of subsections within section
+% 123/a-124    Section and subsection to section
+% 123/a-124/b  Section and subsection to section and subsection
+\def\@fmtpg@sec@dash@@#1#2#3#4{%
+    \@ifempty{#3}{#1\bb@parenize{#2}--\bb@parenize{#4}}{%
+	#1\bb@parenize{#2}--#3\bb@parenize{#4}%
+    }%
+}
+%
+% Formats a second subdivision element.
+\def\@fmtpg@nextsubdiv#1#2{%
+    #2{\@fmtpg@nextsubdiv{%
+            \space\&\space
+            \@fmtpg@sectrange{#1}\@fmtpg@comma
+        }{%
+            , \@fmtpg@sectrange{#1}%
+        }%
+    }%
+}
+%
+% Set up Table 17, subdivisions.
+%
+% A macro is defined for all forms of each abbreviation. Each macro has three
+% parts: a selector, the singular form, and the plural form. If the macro is
+% simply executed, the selector will choose the singular or plural form based on
+% the macro that was called. However, the specific forms may be acquired usink
+% \@fmtpg@singular or @plural.
+%
+\def\bb@abbrev#1#2#3#4{%
+    \@namedef{bb@t17@#1}{\@firstoftwo{#2}{#4}}%
+    \@namedef{bb@t17@#3}{\@secondoftwo{#2}{#4}}%
+    \edef\reserved@a{%
+	\noexpand\let
+            \expandafter\noexpand\csname bb@t17@\chop@space{#4}\endcsname
+	    \expandafter\noexpand\csname bb@t17@#3\endcsname
+	\noexpand\let
+            \expandafter\noexpand\csname bb@t17@\chop@space{#2}\endcsname
+	    \expandafter\noexpand\csname bb@t17@#1\endcsname
+    }%
+    \reserved@a
+}
+\input bbtbl17
+%
+% Special definitions for S and P
+%
+\def\bb@txvii#1#2{%
+    \@namedef{bb@t17@#1}{\@firstoftwo{#2 }{#2#2 }}%
+    \@namedef{bb@t17@#1#1}{\@secondoftwo{#2 }{#2#2 }}%
+}
+\bb@txvii S\textsection
+\bb@txvii P\textparagraph
+%
+% Special macro for the word "at"
+\def\@fmtpg@at{\@firstoftwo{at }{at }}
+\expandafter\let\csname bb@t17@at\endcsname\@fmtpg@at
+\def\@secondofthree#1#2#3{#2}%
+%
+% Format a page number range. This is for ordinary page numbers.
+%
+\def\@fmtpg@pgrange#1{\chop@space@then@run{#1}\@fmtpg@pgrange@}
+\def\@fmtpg@pgrange@#1{\@fmtpg@finddash#1--\@stop}
+%
+% See if there's a dash. If so, then pass it off to the page range handler to
+% chop off extraneous digits.
+\def\@fmtpg@finddash#1-#2-#3\@stop{%
+    #1\@ifnotempty{#2}{%
+	\@fmtpg@findindash#1#2--\@stop
+	\@fmtpg@toend#1\@mark\@mark#2\@mark\@mark\@stop
+    }%
+}
+\def\@fmtpg@findindash#1-#2-#3\@stop{\@ifempty{#2}{--}{ to }}
+%
+% This is a really weird function. What it does is turn:
+%    12345-12346   into  46
+%    12345-12456   into  456
+% #1#2 is the remaining part of the first number.
+% #3 is the part of the second number that is different from the first number.
+% #4#5 is the remaining part of the second number.
+% #6 is the part of the second number that is the same as the first number.
+% #7 is the part of the second number that is the same as the first number,
+% except we'll keep it in case the similar part's too short.
+%
+% The rules are:
+% 1. If we reach the end of the first number (#2 is empty),
+%    a. and we reach the end of the second number at the same time (#5 is
+%       empty), then we just print #3#4, the differing part of the second
+%       number.
+%    b. and we haven't reached the end of the second number, then they're
+%       different lengths, and we print the whole of the second number
+%       (i.e., #6#3#4#5).
+% 2. Otherwise, if we reach the end of the second number, then they're also
+%    different lengths and we print all of the second number.
+% 3. Otherwise we haven't reached any of the ends of numbers.
+%    a. If there is anything in the dissimilar part of the second number, then
+%       skip the next sentence.
+%    b. Otherwise, if the first digit of the first number (#1) is equal to the
+%       first digit of the second number (#4), then push #4 onto #6.
+%    c. Otherwise, push #4 onto #3.
+%    d. Now discard #1, and try again.
+\def\@fmtpg@toend#1#2\@mark#3\@mark#4#5\@mark#6\@mark#7\@stop{%
+    \@ifempty{#2}{% If we're done traversing the first number
+	\@ifempty{#5}{% If we're done traversing the second number
+	    \@ifempty{#3}{#7}{}% If #3 is empty, throw in #7
+	    #3#4%
+	}{#6#7#3#4#5}% Print the numbers in full
+    }{% We're not done traversing the first number
+	% If we're done traversing the second number, print them in full
+	\@ifempty{#5}{#6#7#3#4#5}{%
+	    % We're not done with either number
+	    \@ifempty{#3}{% If there's no dissimilar stuff
+		\ifx#1#4% If the first digits are the same
+		    \expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi
+		{\@fmtpg@toend#2\@mark\@mark#5\@mark#6#7\@mark#4\@stop}%
+		    % First two digits are different
+		{\@fmtpg@toend#2\@mark#4\@mark#5\@mark#6#7\@mark\@stop}%
+	    }{% There is some dissimilar stuff
+		\@fmtpg@toend#2\@mark#3#4\@mark#5\@mark#6#7\@mark\@stop
+	    }%
+	}%
+    }%
+}
+%
+% Traverses a string and puts parentheses around its elements. So
+%  A12e(i)n becomes (A)(12)(e)(i)(n).
+\def\bb@parenthesize{%
+    \ifx\@this@page\relax\else
+	\expandafter\bb@psize\@this@page\@stop o%
+    \fi
+}
+\def\bb@parenize#1{\@ifnotempty{#1}{\bb@psize#1\@stop o}}
+\def\bb@psize#1#2\@stop#3{%
+    \@ifonechar{#1}{%
+	\@test \ifx#1(\fi {% )
+	    \bb@psize@close#3\bb@psize@paren#2\@stop
+	}{%
+	    \@ifletter{#1}{%
+		\bb@psize@close#3(\bb@psize@ltr{#1})%
+		\@ifnotempty{#2}{\bb@psize#2\@stop o}%
+	    }{%
+		\bb@psize@noopen#3#1%
+		\@ifempty{#2}{)}{\bb@psize#2\@stop n}%
+	    }%
+	}%
+    }{%
+	\bb@psize@close#3#1\@ifnotempty{#2}{\bb@psize#2\@stop o}%
+    }%
+}
+\def\bb@psize@paren#1)#2\@stop{(#1)\@ifnotempty{#2}{\bb@psize#2\@stop o}}
+\def\bb@psize@close#1{\ifx#1n)\fi}
+\def\bb@psize@noopen#1{\ifx#1n\else(\fi}
+\def\bb@psize@ltr#1{\ifx#1l\bb@fn@ell{l}\else#1\fi}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% SIGNALS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Token list of signals that interest us. They are in the format:
+%   \@sig{signal}s\@sig{signal}c...\@sig{signal}b
+% The letter following each signal entry is one of "s", "c", or "b", indicating
+% support, contradiction, or background.
+% The signal should be lowercase.
+\let\bb@signals\@empty
+%
+% Adds a new signal. New signals are added to the front of the list, so they
+% will be checked first. This means that longer signals (see also) should be
+% added after shorter signals (see).
+\def\AddSignal#1#2{%
+    \g@prepend@macro\bb@signals{\@sig{#1}#2}%
+}
+\AddSignal{see}{s}
+\AddSignal{see, e.g.,}{s}
+\AddSignal{see also}{s}
+\AddSignal{e.g.,}{s}
+\AddSignal{accord}{s}
+\AddSignal{accord, e.g.,}{s}
+\AddSignal{cf.}{s}
+%
+\AddSignal{contra}{c}
+\AddSignal{but see}{c}
+\AddSignal{but see, e.g.,}{c}
+\AddSignal{but cf.}{c}
+%
+\AddSignal{see generally}{b}
+%
+% Signal for no signal (exists for comparison purposes).
+\def\@no@sig{(No Signal)\ignorespaces}
+%
+% Search for a prefix.
+\def\bb@split@signal#1#2{%
+    \ifx\@last@sig\relax
+	\let\@this@sig\@no@sig
+	\let\@this@sigt=s% No signal is a supporting signal.
+    \else
+	\let\@this@sig\@last@sig
+	\let\@this@sigt\@last@sigt
+    \fi
+    \def\@sig##1##2{%
+	\chop@prefix{##1 }{#1}{%
+	    \def\@this@sig{##1}\let\@this@sigt##2%
+	    \afterassignment\bb@eatto@empty
+	    \def\reserved@a % Next thing on the token list is {case...}
+	}%
+    }%
+    \bb@signals \def\reserved@a{#1}\@empty
+    \@expand{#2}{\reserved@a}i%
+}
+%
+% Show the signal itself
+\def\bb@showsig{%
+    \ifx\@this@sig\@no@sig\else
+	\expandafter\bb@showsig@\@this@sig\@empty but \@empty\@stop
+	\space
+    \fi
+}
+%
+% Chops the leading ``but'' if this signal type and the last signal type match.
+% Implements BB rule 1.2(c).
+\def\bb@showsig@#1but #2\@empty#3\@stop{%
+    \bgroup
+        \@no@dot@space
+        \ifx\@this@sigt\@last@sigt
+            \@ifempty{#2}{\@capemph{#1}}{\@capemph{#2}}%
+        \else
+            \expandafter\@capemph\expandafter{\@this@sig}%
+        \fi
+    \egroup
+    \bb@nocap
+}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% ABBREVIATIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\def\bb@abbwords{}%
+% Geographic locations take precedence over general terms in abbreviations
+\def\bb@abbrev#1#2{%
+    \bb@abbrev@ifmultiword{#1}{%
+        \expandafter\let\csname bb@noabb@#1\endcsname\@empty
+        \NotMainParty{#1}%
+        \g@addto@macro\bb@abbwords{\bb@replace@wd{#1}{#2}}%
+    }{%
+        \expandafter\let\csname bb@noabb@#1\endcsname\@empty
+        \NotMainParty{#1}%
+        \@namedef{bb@ab@#1}{#2}%
+    }%
+}
+\def\bb@abbrev@ifmultiword#1#2#3{%
+    \edef\bb@abbrev@tmp{\process@words{#1}\@gobble\@iden\relax}%
+    \@test \ifx\bb@abbrev@tmp\@empty\fi {#3}{#2}%
+}
+\input{bbtbl11}
+\def\bb@abbrev#1#2{%
+    \bb@abbrev@ifmultiword{#1}{%
+        \g@addto@macro\bb@abbwords{\bb@replace@wd{#1}{#2}}%
+    }{%
+        \@namedef{bb@ab@#1}{#2}%
+    }%
+}
+\input{bbtbl6}
+% Always-replace words, from BB Rule 10.2.1(c).
+% Noteworthy of this list: none of them will cause a space to be collapsed.
+% when they are the first word 
+\def\bb@alwaysabbwords{%
+    \bb@replace@wd{ and}{ \&}% Need space so we don't abbreviate "Band" to "B&"
+    \bb@replace@wd{Association}{Ass'n}%
+    \bb@replace@wd{Brothers}{Bros.}%
+    \bb@replace@wd{Company}{Co.}%
+    \bb@replace@wd{Corporation}{Corp.}%
+    \bb@replace@wd{Incorporated}{Inc.}%
+    \bb@replace@wd{Limited}{Ltd.}%
+    \bb@replace@wd{Number}{No.}%
+}
+\def\bb@alwaysabb#1#2{%
+    \def\bb@cur@wd{#1}%
+    \let\bb@replace@wd@test\@ifempty
+    \bb@alwaysabbwords
+    \@expand{#2}\bb@cur@wd i%
+}
+%
+% Multiple word replacement. Given a word and its replacement, searches in
+% \bb@cur@wd for that word. If it's there, and the next character is not a
+% letter (or it's the end of the word), then replace.
+\def\bb@replace@wd#1#2{\@expand\bb@replace@wd@\bb@cur@wd i{#1}{#2}}
+\def\bb@replace@wd@#1#2#3{%
+    \let\bb@cur@wd\@empty
+    \def\bb@replace@wd@@##1#2##2\@stop{%
+	\@ifempty{##2}{%
+	    % No match. Chop off the marker \bb@replace@wd@@ and append to
+	    % result.
+	    \bb@replace@wd@@@@##1%
+	}{%
+	    \bb@replace@wd@test{##1}{%
+		% Found match, but do not replace.
+		\bb@replace@wd@append{##1#2}%
+		\let\bb@replace@wd@test\@thirdofthree
+		\bb@replace@wd@@##2\@stop
+	    }{%
+		% Found match. First, append the ##1 text.
+		\bb@replace@wd@append{##1}%
+		% Then, check the next token to see if it's a letter.
+		\futurelet\@let@token\bb@replace@wd@@@##2\@stop{#2}{#3}%
+	    }%
+	}%
+    }%
+    \bb@replace@wd@@#1\bb@replace@wd@@#2\@stop
+}
+%
+% By default, abbreviate everything.
+\let\bb@replace@wd@test\@thirdofthree
+\def\bb@replace@wd@@@#1\@stop#2#3{%
+    % If it's a letter, keep the original text; otherwise append the
+    % abbreviation.
+    \@ifletter\@let@token{\bb@replace@wd@append{#2}}{\bb@replace@wd@append{#3}}%
+    \ifx\@let@token\bb@replace@wd@@\else % If there is more text to process
+	\@skipafi{\bb@replace@wd@@#1\@stop}%
+    \fi
+}
+\def\bb@replace@wd@@@@#1\bb@replace@wd@@{\bb@replace@wd@append{#1}}
+\def\bb@replace@wd@append#1{%
+    \expandafter\def\expandafter\bb@cur@wd\expandafter{\bb@cur@wd#1}%
+}
+\newif\if@bb@abbrev@us \@bb@abbrev@usfalse
+%
+% Abbreviates a name based on R. 10 for cases.
+\def\bb@abbrev@name#1#2{%
+    \def\bb@cur@wd{#1}%
+    \text@syms
+    \@ifundefined{bb@noabb@#1}{%
+	\restore@syms
+	\bb@abbwords
+	\if@bb@abbrev@us
+	    \bb@replace@wd{United States}{U.S.}\@bb@abbrev@usfalse
+	\fi
+	\@expand\bb@abbrev@name@\bb@cur@wd i{#2}{bb@ab@}%
+    }{\restore@syms#2{#1}}%
+}
+%
+% The abbreviation prefix to be used. This is set by \bb@abbrev@name@.
+\let\bb@abbrev@pfx\relax
+%
+% A temporary variable for \bb@abbrev@name@.
+\let\bb@abbrev@tmp\@empty
+% This function does single-word abbreviations.
+\def\bb@abbrev@name@#1#2#3{%
+    \def\bb@abbrev@pfx{#3}%
+    % The following tokens are used to gobble spaces as necessary.
+    %
+    % If the next token is a space and then \bb@mrknospc, eat the space.
+    \let\bb@eatspc\relax
+    % Empty marks that tell \bb@eatspc whether or not to gobble a space.
+    \let\bb@mrkspc\relax \let\bb@mrknospc\relax
+    % If the next token is \bb@dotmarkspc, then print a dot, and prepare to eat
+    % a space with \bb@eatspc. This token appears after capital letters that
+    % potentially could gobble their following space if immediately followed by
+    % a dot.
+    \let\bb@doteatspc\relax
+    % Marks a dot found in the string.
+    \let\bb@dotmarkspc\relax
+    % Marks a space.
+    \let\bb@abb@spc\relax
+    %
+    % Iteration 1: replace words with their abbreviations, retain punctuation as
+    % is (except for dots), and replace spaces with a marker token.
+    %
+    \protected@edef\bb@abbrev@tmp{%
+	\process@words{#1}\bb@abb@word\bb@abb@punct\bb@abb@spc
+    }%
+    % Eliminate multiple spaces into a single one.
+    \def\bb@abb@spc##1{%
+	\ifx##1\bb@abb@spc
+	    \expandafter\bb@abb@spc
+	\else
+	    \noexpand\bb@abb@spc##1%
+	\fi
+    }
+    %
+    % Iteration 2: eliminate duplicate spaces.
+    %
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp}%
+    \def\bb@eatspc##1##2{%
+	\ifx##1\bb@abb@spc % If #1 is a space marker
+	    \ifx##2\bb@mrknospc\else##1\fi
+	\else
+	    ##1##2%
+	\fi
+    }%
+    \def\bb@mrkspc{\iffalse\bb@mrkspc\fi}%
+    \def\bb@mrknospc{\iffalse\bb@mrknospc\fi}%
+    \def\bb@abb@spc{ \iffalse\bb@abb@spc\fi}%
+    \def\bb@doteatspc##1{%
+	\ifx##1\bb@dotmarkspc
+	    .\expandafter\bb@eatspc
+	\else##1\fi
+    }%
+    \def\bb@dotmarkspc{.}%
+    %
+    % Iteration 3: remove spaces between single initials.
+    %
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp\@empty\@empty}%
+    \@expand{#2}\bb@abbrev@tmp i%
+}
+\def\bb@abb@stop{\stop}
+% What to do when we see a word. First, see if we know an abbreviation. Then,
+% run it through the dot-collapsing machine.
+\def\bb@abb@word#1{%
+    \@ifundefined{\bb@abbrev@pfx #1}{%
+	\bb@abb@a{#1}%
+    }{%
+	\@expand\bb@abb@a{\csname \bb@abbrev@pfx #1\endcsname}{ii}%
+    }%
+}
+%
+% What to do when we see punctuation. Special treatment just if it's a dot.
+\def\bb@abb@punct#1{%
+    \ifx.#1\bb@dotmarkspc\else#1\fi
+}
+%
+% The abbreviation system works as a state machine whose purpose is to determine
+% how to collapse spaces between dots.
+%
+% Initializes the state machine.
+\def\bb@abb@a#1{\bb@abb@dot\@mark#1\bb@abb@stop}
+%
+% State indicates that this word receives no space-collapsing properties. Flag
+% for a space at the beginning of the word, and then just print the word.
+\def\bb@abb@err#1\bb@abb@stop{\bb@mrkspc#1}
+%
+% State we're in if we just saw a dot (or when just starting).
+% If this is the end of the word, then that means that this is a
+% single-letter-dot combo (like "A."), so flag for no space before or after this
+% word.
+% If the next character is a letter, then go to state \bb@abb@cap.
+% If it's a digit, go to state \bb@abb@num.
+% Otherwise, go to \bb@abb@err (which should really never occur).
+\def\bb@abb@dot#1\@mark#2{%
+    \@test \ifx\bb@abb@stop#2\fi
+    {\bb@mrknospc#1\bb@eatspc}%
+    {\@ifletter{#2}% If it's an alphabetic letter. We'll join e.e. cummings
+	{\bb@abb@cap#1#2\@mark}%
+	{\@ifdigit{#2}{\bb@abb@num#1#2\@mark}{\bb@abb@err#1#2}}%
+    }%
+}
+%
+% We just saw a single capital letter.
+% If it's the end, then no space before, and space after if we later see a dot.
+% If the next character is a dot, then go to \bb@abb@dot.
+% Otherwise, go to \bb@abb@err.
+\def\bb@abb@cap#1\@mark#2{%
+    \@test \ifx\bb@abb@stop#2\fi
+    {\bb@mrknospc#1\bb@doteatspc}%
+    {\@test \ifx.#2\fi {\bb@abb@dot#1#2\@mark}{\bb@abb@err#1#2}}%
+}
+%
+% We're reading in a number.
+% If it's the end, then no space before, and space after if we later see a dot.
+% If the next character's a dot, then go to \bb@abb@dot.
+% If it's a digit, continue with \bb@abb@num.
+% Otherwise, it's probably a letter, like "4th", so go to \bb@abb@nend.
+\def\bb@abb@num#1\@mark#2{%
+    \@test \ifx\bb@abb@stop#2\fi
+    {\bb@mrknospc#1\bb@doteatspc}%
+    {\@test \ifx.#2\fi
+	{\bb@abb@dot#1#2\@mark}%
+	{\@ifdigit{#2}{\bb@abb@num#1#2\@mark}{\bb@abb@nend#1#2}}%
+    }%
+}
+%
+% We hit this state when the word starts with a number and ends with letters. So
+% no special treatment at the end, but eat spaces before the word.
+\def\bb@abb@nend#1\bb@abb@stop{\bb@mrknospc#1}
+%
+% Abbreviations for Journals.
+%
+\let\bb@jrnabb@inferlvl\tw@
+\def\bb@jrnabb@abbwords{}
+\def\bb@abbrev#1#2{%
+    \bb@abbrev@ifmultiword{#1}{%
+        \g@addto@macro\bb@jrnabb@abbwords{%
+            \bb@replace@wd{#1}{\bb@jrnabb@loc@pre#2\bb@jrnabb@loc@post}%
+        }%
+    }{%
+        \@namedef{bb@jab@#1}{\bb@jrnabb@loc@pre#2\bb@jrnabb@loc@post}%
+    }%
+}
+\input{bbtbl13a}
+\input{bbtbl11}
+\def\bb@abbrev#1#2{%
+    \bb@abbrev@ifmultiword{#1}{%
+        \g@addto@macro\bb@jrnabb@abbwords{%
+            \bb@replace@wd{#1}{\bb@jrnabb@reg@pre#2\bb@jrnabb@reg@post}%
+        }%
+    }{%
+        \@namedef{bb@jab@#1}{\bb@jrnabb@reg@pre#2\bb@jrnabb@reg@post}%
+    }%
+}
+\input{bbtbl13}
+\def\bb@jrnabb@removewd#1{%
+    \expandafter\let\csname bb@jrnabb@removewd@#1\endcsname\@empty
+}
+\bb@jrnabb@removewd{The}
+\bb@jrnabb@removewd{the}
+\bb@jrnabb@removewd{of}
+\bb@jrnabb@removewd{at}
+\bb@jrnabb@removewd{de}
+\bb@jrnabb@removewd{in}
+\bb@jrnabb@removewd{,}
+%
+% Removes words from a text. #1 is the text to be processed, #2 is a macro
+% prefix identifying the words to be removed, and #3 is the callback.
+%
+\def\bb@remove@words#1#2#3{%
+    \def\bb@abbrev@pfx{#2}%
+    \let\bb@abb@spc\relax
+    \protected@edef\bb@abbrev@tmp{%
+        \process@words{#1}\bb@remove@words@word\bb@remove@words@word\bb@abb@spc
+    }%
+    % Eliminate multiple spaces into a single one.
+    \def\bb@abb@spc##1{%
+	\ifx##1\bb@abb@spc
+	    \expandafter\bb@abb@spc
+	\else
+	    \noexpand\bb@abb@spc##1%
+	\fi
+    }
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp}%
+    \let\bb@abb@spc\space
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp}%
+    \@expand{#3}\bb@abbrev@tmp i%
+}
+\def\bb@remove@words@word#1{%
+    \@ifundefined{\bb@abbrev@pfx#1}{#1}{}%
+}
+\def\bb@abbrev@journal#1#2{%
+    \text@syms
+    \bb@remove@words{#1}{bb@jrnabb@removewd@}\bb@abbrev@journal@{#2}
+}
+\newif\if@bb@jrnabb@atstart
+\def\bb@abbrev@journal@#1#2{%
+    \restore@syms
+    \def\bb@abbrev@pfx{bb@jab@}
+    \def\bb@cur@wd{#1}%
+    \bb@jrnabb@abbwords % Abbreviate multiple words
+    \let\bb@abb@spc\relax
+    \let\bb@abbrev@tmp\@empty
+    \let\bb@jrnabb@reg@pre\relax
+    \let\bb@jrnabb@reg@post\relax
+    \let\bb@jrnabb@loc@pre\relax
+    \let\bb@jrnabb@loc@post\relax
+    \@bb@jrnabb@atstarttrue
+    \@expand\process@words\bb@cur@wd i%
+        \bb@jrnabb@word\bb@jrnabb@punct\bb@jrnabb@space
+    %
+    \let\bb@jrnabb@reg@pre\bb@jrnabb@the@reg@pre
+    \let\bb@jrnabb@reg@post\bb@jrnabb@the@reg@post
+    \let\bb@jrnabb@loc@pre\bb@jrnabb@the@loc@pre
+    \let\bb@jrnabb@loc@post\bb@jrnabb@the@loc@post
+    \let\bb@jrnabb@spacemark\relax
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp\@empty\@empty}%
+    \let\bb@jrnabb@spacemark\space
+    \@expand\bb@abbrev@removedotspaces\bb@abbrev@tmp i{\def\bb@abbrev@tmp}%
+    \protected@edef\bb@abbrev@tmp{\bb@abbrev@tmp}%
+    \@expand{#2}\bb@abbrev@tmp i%
+}%
+\def\bb@jrnabb@the@reg@pre{\@gobble\bb@jrnabb@reg@pre}%
+\def\bb@jrnabb@the@loc@pre{\@gobble\bb@jrnabb@loc@pre}%
+\def\bb@jrnabb@the@reg@post#1#2{%
+    \@test \ifx#1\space \fi{%
+        \@test\ifx#2\bb@jrnabb@reg@pre\fi{#1}{\bb@jrnabb@spacemark}%
+    }{#1}#2%
+}%
+\def\bb@jrnabb@the@loc@post#1#2{%
+    \@test \ifx#1\space \fi{%
+        \@test\ifx#2\bb@jrnabb@loc@pre\fi{#1}{\bb@jrnabb@spacemark}%
+    }{#1}#2%
+}%
+\def\bb@jrnabb@word#1{%
+    \if@bb@jrnabb@atstart
+        \def\reserved@a{#1}\def\reserved@b{Law}%
+        \ifx\reserved@a\reserved@b
+            \bb@abbrev@cat{#1}%
+        \else
+            \bb@abbrev@replace{#1}%
+        \fi
+    \else
+        \bb@abbrev@replace{#1}%
+    \fi
+    \@bb@jrnabb@atstartfalse
+}
+\def\bb@jrnabb@punct#1{%
+    \@bb@jrnabb@atstartfalse
+    \bb@abbrev@cat{#1}%
+}
+\def\bb@jrnabb@space{%
+    \if@bb@jrnabb@atstart \else
+        \bb@abbrev@cat{\space}%
+    \fi
+}
+\def\bb@abbrev@cat#1{\addto@macro\bb@abbrev@tmp{#1}}
+\def\bb@abbrev@replace#1{%
+    \@ifundefined{\bb@abbrev@pfx#1}{%
+        \bb@abbrev@cat{#1}%
+    }{%
+        \@expand\bb@abbrev@cat{\csname\bb@abbrev@pfx#1\endcsname}{ii}%
+    }%
+}
+%
+% Removes spaces between single initials, from the provided text.
+%
+% This uses a state machine having four states:
+%
+% 0: Start (or nothing unusual)
+%    - One-letter word -> state 1
+%    - Otherwise -> state 0
+% 1: Seen a one-letter word
+%    - Dot -> state 2
+%    - One-letter word -> state 1 (this should never happen)
+%    - Otherwise -> state 0
+% 2: Seen a one-letter word and a dot
+%    - Space -> state 3, reserve the space
+%    - One-letter word -> state 1
+%    - Otherwise -> state 0
+% 3: Seen a one-letter word, a dot, and a space; space is now reserved
+%    - One-letter word -> state 1 (eat the space)
+%    - Number -> state 0 (eat the space)
+%    - Otherwise -> output the space, state 0
+%
+\def\bb@abbrev@removedotspaces#1#2{%
+    \let\bb@abbrev@removedotspaces@state\z@
+    \let\bb@abbrev@tmp\@empty
+    \process@words{#1}%
+        \bb@abbrev@removedotspaces@word
+        \bb@abbrev@removedotspaces@punct
+        \bb@abbrev@removedotspaces@space
+    \@expand{#2}\bb@abbrev@tmp i%
+}
+\def\bb@abbrev@removedotspaces@space{%
+    \ifnum\bb@abbrev@removedotspaces@state=\tw@
+        \let\bb@abbrev@removedotspaces@state\thr@@
+    \else
+        \bb@abbrev@cat{ }%
+        \let\bb@abbrev@removedotspaces@state\z@
+    \fi
+}
+\def\bb@abbrev@removedotspaces@reset{%
+    \ifnum\bb@abbrev@removedotspaces@state=\thr@@
+        \bb@abbrev@cat{ }%
+    \fi
+    \let\bb@abbrev@removedotspaces@state=\z@
+}
+\def\bb@abbrev@removedotspaces@punct#1{%
+    \ifnum\bb@abbrev@removedotspaces@state=\@ne
+        \ifx.#1%
+            \let\bb@abbrev@removedotspaces@state=\tw@
+        \else
+            \bb@abbrev@removedotspaces@reset
+        \fi
+    \else
+        \bb@abbrev@removedotspaces@reset
+    \fi
+    \bb@abbrev@cat{#1}%
+}
+\def\bb@abbrev@removedotspaces@word#1{%
+    \bb@abbrev@removedotspaces@word@#1\@stop
+    \bb@abbrev@cat{#1}%
+}
+\def\bb@abbrev@removedotspaces@word@#1#2\@stop{%
+    \@ifdigit{#1}{%
+        \bb@abbrev@removedotspaces@digit
+    }{%
+        \@ifempty{#2}{%
+            \@ifletter{#1}{%
+                \bb@abbrev@removedotspaces@initial
+            }{%
+                \bb@abbrev@removedotspaces@reset
+            }%
+        }{%
+            \bb@abbrev@removedotspaces@reset
+        }%
+    }%
+}
+\def\bb@abbrev@removedotspaces@digit{%
+    \ifnum\bb@abbrev@removedotspaces@state=\thr@@
+        \let\bb@abbrev@removedotspaces@state=\z@
+    \else
+        \bb@abbrev@removedotspaces@reset
+    \fi
+}
+\def\bb@abbrev@removedotspaces@initial{%
+    \let\bb@abbrev@removedotspaces@state=\@ne
+}
+\def\bb@abbrev#1#2{\@namedef{bb@t13b@#1}{#2}}
+\input{bbtbl13b}
+\def\bb@abbrev@journalname#1#2{%
+    \@ifundefined{bb@t13b@#1}{%
+        \PackageWarning\bb@pkgname{%
+            Abbreviating `#1'.\MessageBreak
+            Journal abbreviation is experimental. Please ensure\MessageBreak
+            that it is correct. This occurred%
+        }%
+        \bb@abbrev@journal{#1}{#2}%
+    }{%
+        \@expand{#2}{\csname bb@t13b@#1\endcsname}{ii}%
+    }%
+}
+\def\AbbreviateFor#1#2{%
+    \csname bb@abbrev@#1\endcsname{#2}{\@iden}%
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% PARENTHETICALS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\newtoks\bb@parens \bb@parens{}
+%
+% Add a parenthetical to the end of the parenthetical list.
+\def\bb@addparen@end#1{%
+    \toks@{#1}%
+    \edef\bb@paren@tmp{\noexpand\bb@parens{\the\bb@parens\the\toks@}}%
+    \bb@paren@tmp
+}
+%
+% Add a parenthetical in order to the list.
+\DeclareRobustCommand\bb@addparen[2]{%
+    \edef\bb@paren@tmp{\the\bb@parens}%
+    \bb@parens{}%
+    \def\@paren##1##2{%
+	\ifnum##1>#1\relax
+	    \def\@paren####1\bb@addparen@end####2{%
+		\bb@addparen@end{####2\@paren{##1}{##2}####1}%
+	    }%
+	    \expandafter\@paren
+	\else
+	    \bb@addparen@end{\@paren{##1}{##2}}%
+	\fi
+    }%
+    \bb@paren@tmp\bb@addparen@end{\@paren{#1}{#2}}%
+}
+%
+% Draw the parentheticals. It will always add an extra space to the front. Also
+% clears the parenthetical list.
+\def\bb@showparens{%
+    \def\@paren##1##2{%
+	\@test \ifodd##1\fi{%
+	    , \chop@space{##2}%
+            \chop@space@then@run{##2}\if@endswithdot
+                {\@bb@dottrue}{\@bb@dotfalse}%
+	}{%
+	    \ifnum##1=\bb@paren@hia
+		% A parenthetical of two is the special ``hereinafter''
+		% parenthetical. It needs to (1) be typeset differently, and (2)
+		% caused to update the short citation form.
+		\ifnum\bb@citelevel=\@ne % Only when not in parenthetical
+		    \if@bb@in@toa\else      % Not in TOA
+			\space[hereinafter ##2]%
+			\@expand{\g@addto@macro\bb@hia@cites}{\@this@case,}i%
+			\bb@supra@form\@this@case{##2}%
+			\did@full@cite\@this@case
+		    \fi
+		\fi
+	    \else
+		\space(\chop@space{##2})\@bb@dotfalse
+	    \fi
+	}%
+    }%
+    \the\bb@parens
+}
+%
+% Manages hereinafter citations, to make sure that the citation is in fact used.
+\let\bb@hia@cites\@empty
+\def\bb@hia@remove#1{%
+    \@expandtwoargs\@removeelement{#1}\bb@hia@cites\bb@hia@cites
+    \global\let\bb@hia@cites\bb@hia@cites
+}
+\AtEndDocument{%
+    \ifx\bb@hia@cites\@empty\else
+	\PackageWarning\bb@pkgname{%
+	    The following sources specified hereinafter forms\MessageBreak
+	    that went unused:\MessageBreak
+	    \space\space\bb@hia@cites\MessageBreak
+	    Consider removing the hereinafter form.\MessageBreak
+	    This occurred%
+	}%
+    \fi
+}
+%
+% Add a big list of parentheticals, separated by ") (".
+\def\bb@addparens#1#2{\bb@addparens@{#1}#2\@stop}
+\def\bb@addparens@#1(#2)\@stop{\full@split{) (}{#2}{\bb@addparen{#1}}}
+%
+% Parenthetical priority numbers.
+%
+% Odd numbers are set with commas, and even numbers are set with parentheses.
+%
+\chardef\bb@paren@date=0                 % Date parenthetical
+\chardef\bb@paren@casedocdocket=2        % Docket number for case document
+\chardef\bb@paren@hia=4                  % Hereinafter
+\chardef\bb@paren@casealt=6              % Alternate case name
+\chardef\bb@paren@bookreview=8           % Book review citation
+\chardef\bb@paren@opinion=10             % Opinion disposition (en banc, etc.)
+\chardef\bb@paren@forthcomingms=16       % Page number for forthcoming article
+\chardef\bb@paren@doc=20                 % Document-level parenthetical
+\chardef\bb@paren@url=51                 % URL parenthetical
+\chardef\bb@paren@cite=100               % Citation-level parenthetical
+\chardef\bb@paren@prior=201              % Prior history of case
+\chardef\bb@paren@subseq=203             % Subsequent history of case
+\chardef\bb@paren@comment=205            % Commentary
+\chardef\bb@paren@reprint=207            % "Reprinted in" parenthetical
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% TABLE OF AUTHORITIES
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\def\do#1{%
+    \NewSortedList{bb@toa@#1}\SortAlpha{%
+	\@ifundefined{lc@##1}{%
+	    \@expand{\bb@dotoa{##2}}{\csname fc@##1\endcsname}{ii}%
+	}{%
+	    \@expand{\bb@dotoa{##2}}{\csname lc@##1\endcsname}{ii}%
+	}%
+    }%
+}
+\bb@type@doforall
+\def\bb@dotoa#1#2{\def#1{#2}}
+\def\bb@addtotoa#1{%
+    \if@bb@in@toa\else
+	\@ifundefined{tc@#1}\relax{%
+            \@expand{\bb@addtotoa@{#1}}{%
+                \expandafter\strip@prefix\meaning\thepage
+            }i%
+        }%
+    \fi
+}
+% Have to separate this into a separate macro because \addtocontents temporarily
+% does \let\thepage\relax
+\def\bb@addtotoa@#1#2{%
+    \addtocontents{toa}{%
+        \protect\contentsline{bb@toa}{#1}{\thepage}{%
+            \noexpand\the\noexpand\c@page
+        }{#2}%
+    }%
+}%
+\newif\if@bb@in@toa
+%
+% Each entry in the TOA file has three parameters (other than the leading
+% bb@toa):
+% #1: the citation names
+% #2: the display-form page number
+% #3: the numeric page number
+% #4: the relevant definition of \thepage (to identify different page counting
+%     schemes)
+%
+% The goal is to generate two types of items:
+% 1. Lists, called bb@toa@[type], of citation names falling within that [type]
+% 2. Macros of the form \bb@pg@[citation], identifying the page numbers.
+%
+% The macros of (2) take on the following form:
+%   {last-display-page}{last-numeric-page}{last-\thepage}{built-page-list}
+%
+% The rule is that appending built-page-list and last-display-page will always
+% result in the correct page list. Algorithm is as follows:
+%
+% - For the first page number, leave last-display-page empty
+%
+\def\l@bb@toa#1#2#3#4{%
+    \@ifundefined{bb@pg@#1}{%
+	\advance\@tempcnta\@ne
+	\message{(\the\@tempcnta)}%
+	\AddToList{bb@toa@\csname tc@#1\endcsname}{#1}%
+	\@namedef{bb@pg@#1}{{}{#3}{#4}{#2}}%
+    }{%
+	\expandafter\bb@toa@addpg\csname bb@pg@#1\endcsname{#2}{#3}{#4}%
+    }%
+}
+\def\bb@toa@addpg#1#2#3#4{%
+    \expandafter\bb@toa@addpg@#1#1{#2}{#3}{#4}%
+}
+% #1-#4 are the four bb@pg@[citation] parameters
+% #5 is \bb@pg@[citation] macro
+% #6-#8 are #2-#4 of \l@bb@toa
+\def\bb@toa@addpg@#1#2#3#4#5#6#7#8{%
+    \def\reserved@a{#3}\def\reserved@b{#8}%
+    \ifx\reserved@a\reserved@b
+        \@tempcnta=#2\relax
+        \ifnum#7=\@tempcnta\else
+            \advance\@tempcnta\@ne
+            \ifnum#7=\@tempcnta
+                \@ifempty{#1}{%
+                    \def#5{{#6}{#7}{#8}{#4--}}%
+                }{%
+                    \def#5{{#6}{#7}{#8}{#4}}%
+                }%
+            \else
+                \def#5{{}{#7}{#8}{#4#1, #6}}%
+            \fi
+        \fi
+    \else
+        \def#5{{}{#7}{#8}{#4#1, #6}}%
+    \fi
+}
+\def\tableofauthorities{%
+    \begingroup
+	\@bb@in@toatrue
+	\@tempcnta\z@
+	\@input{\jobname.toa}%
+        \let\do\bb@toa@dolist
+        \bb@type@doforall
+    \endgroup
+    \if@filesw
+	\newwrite\tf@toa
+	\immediate\openout\tf@toa \jobname.toa\relax
+    \fi
+}
+\def\bb@toa@dolist#1{%
+    \IfEmptyList{bb@toa@#1}{}{%
+	\section*{#1}%
+	\ShowList{bb@toa@#1}{%
+	    \expandafter\bb@toa@renumber\csname bb@pg@##1\endcsname
+	}%
+	\parindent\z@
+	\parskip\baselineskip
+	\ShowList{bb@toa@#1}{%
+	    \@toaline{\sentence{##1}}{\csname bb@pg@##1\endcsname}%
+	}%
+    }%
+}
+\newcounter{passimnum} \c@passimnum=\z@
+\def\bb@toa@renumber#1{\expandafter\bb@toa@count\expandafter#1#1}%
+\def\bb@toa@count#1#2#3#4#5{%
+    \def#1{#5#2}%
+    \ifnum\c@passimnum>\z@
+        \@tempcnta=\@ne
+        \bb@toa@count@#1#5#2, \@stop
+    \fi
+}
+\def\bb@toa@count@#1#2, #3\@stop{%
+    \@ifempty{#3}{%
+        \ifnum\@tempcnta<\c@passimnum\else
+            \def#1{\bb@fn@sig{passim}}%
+        \fi
+    }{%
+        \advance\@tempcnta\@ne
+        \bb@toa@count@#1#3\@stop
+    }%
+}
+%\def\@tocrmarg{2.55em\@plus 2.55em}
+\def\@toaline#1#2{%
+    {\leftskip\z@\rightskip \@tocrmarg \parfillskip -\rightskip
+     \parindent \z@\@afterindenttrue
+     \interlinepenalty\@M
+     \leavevmode
+     #1\nobreak
+     \leaders\hbox{$\m@th
+        \mkern \@dotsep mu\hbox{.}\mkern \@dotsep
+        mu$}\hskip 2em \@plus 1fill
+     \nobreak
+     \hbox{\normalfont \normalcolor #2}%
+     \par}%
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% URL PROCESSING
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% User command to display a URL.
+\def\url#1{\bb@parseurl{#1}\reserved@a\reserved@a}%
+% Parses the url (#1) and puts it into control sequence (#2). The resulting URL
+% should have appropriate breakpoints put in, and be totally unexpandable or
+% protected.
+\if@bb@html
+    \def\bb@parseurl#1#2{%
+	\protected@edef#2{\bb@parseurl@#1\bb@parseurl@}%
+	\protected@edef#2{%
+	    {%
+		\bb@tag{a href="#2"}{#2}%
+	    }%
+	}%
+    }
+\else
+    \def\bb@parseurl#1#2{%
+	\protected@edef#2{%
+	    \begingroup
+                \leavevmode
+		\bb@parseurl@{\hbox\bgroup}#1\bb@parseurl@
+	    \endgroup
+	}%
+    }
+\fi
+%
+% Parses a single character from a URL. #2 is the character. #1 is a state for
+% whether we are inside an \hbox or not. If it is empty, we are inside a box. If
+% it is not empty, we are inside a box, and the text is the command to start the
+% box.
+\def\bb@parseurl@#1#2{%
+    \@ifonechar{#2}{%
+	\@test \ifx#2\bb@parseurl@ \fi{%
+	    % End of URL. If we're inside a box, end it.
+            \@ifempty{#1}\egroup\@empty
+	}{%
+	    \@test \ifcat\noexpand#2\relax \fi{%
+		% Control sequence.
+                % End any box we're in.
+                \@ifempty{#1}\egroup\@empty
+		\@ifundefined{bb@url@\string#2}{%
+                    \string#2%
+		}{%
+		    \csname bb@url@\string#2\endcsname
+		}%
+                % Parse the next character, setting the state to being outside a
+                % box.
+                \bb@parseurl@{\hbox\bgroup}%
+	    }{%
+                % Not a control sequence.
+		\@ifundefined{bb@url@\bb@url@bslash\string#2}{%
+                    % Normal character. Start a box if we are not in one.
+                    #1%
+		    \string#2%
+                    % Parse the next character, setting the state as in a box.
+                    \bb@parseurl@{}%
+		}{%
+                    % A character with special meaning. End any box we're in.
+                    \@ifempty{#1}\egroup\@empty
+                    \csname bb@url@\bb@url@bslash\string#2\endcsname
+                    \bb@parseurl@{\hbox\bgroup}%
+		}%
+	    }%
+	}%
+    }{%
+	\bb@parseurl@{#1}\{#2\}%
+    }%
+}
+% \bb@url@bslash is just a backslash character.
+\edef\bb@url@bslash{\expandafter\@gobble\string\\}
+%
+% Borrowed from url.sty
+%
+% These characters accept a breakpoint after them.
+\if@bb@html
+    \let\UrlBreaks\@empty
+\else
+    \def\UrlBreaks{\do\.\do\@\do\!\do\%\do\;\do\]\do\)\do\,\do\?\do\+%
+    \do\=\do\#\do\:\do\-}
+\fi
+%
+% These characters accept a breakpoint _and_ add a little extra space.
+\if@bb@html
+    \let\UrlBigBreaks\@empty
+\else
+    \def\UrlBigBreaks{\do\/\do\?\do\&}
+\fi
+%
+% These characters accept no breakpoints, but are often backslashed; including
+% them forces the removal of the backslash.
+\def\UrlNobreaks{\do\^\do\$}
+%
+% These characters require special treatment when they are seen.
+\if@bb@html
+    \let\UrlSpecials\@empty
+\else
+    \def\UrlSpecials{%
+	\do\<{$\protect\langle$}\do\_{\protect\bb@underscore}%
+	\do\|{$\protect\mid$}\do\{{$\protect\lbrace$}%
+	\do\\{$\protect\backslash$}%
+    }%
+\fi
+\def\bb@underscore{%
+    \kern\p@\nobreak
+    \leaders\hrule\@height -.15ex\@depth.2ex\hskip .3em \@plus .2em \@minus .1em\relax
+    \nobreak\hbox{}%
+    \hskip\p@
+}
+%
+% These characters require special treatment, but are not legal breakpoints.
+\if@bb@html
+    \def\UrlNobreakSpecials{%
+	\do\<{$\protect\langle$}\do\_{\protect\textunderscore}%
+	\do\|{$\protect\mid$}\do\{{$\protect\lbrace$}%
+	\do\\{$\protect\backslash$}%
+	\do\>{$\protect\rangle$}\do\}{$\protect\rbrace$}\do\~{$\protect\sim$}%
+	\do\ {\protect\ }%
+    }
+\else
+    \def\UrlNobreakSpecials{%
+	\do\>{$\protect\rangle$}\do\}{$\protect\rbrace$}\do\~{$\protect\sim$}%
+	\do\ {\protect\ }%
+    }
+\fi
+%
+% Now actually apply commands to the character classes.
+\def\do#1{%
+    \expandafter\edef\csname bb@url@\string#1\endcsname{%
+        \unskip\unpenalty\nobreak
+	\expandafter\@gobble\string#1\penalty\exhyphenpenalty
+    }%
+}
+\UrlBreaks
+\newskip\urlbreakskip \urlbreakskip=0pt plus .4pt
+\def\do#1{%
+    \expandafter\protected@edef\csname bb@url@\string#1\endcsname{%
+        \unskip\unpenalty
+	\nobreak\hskip\urlbreakskip
+	\expandafter\@gobble\string#1\penalty\exhyphenpenalty\hskip\urlbreakskip
+    }%
+}
+\UrlBigBreaks
+\def\do#1{%
+    \expandafter\edef\csname bb@url@\string#1\endcsname{%
+	\expandafter\@gobble\string#1%
+    }%
+}
+\UrlNobreaks
+\def\do#1#2{\@namedef{bb@url@\string#1}{#2\penalty\exhyphenpenalty}}
+\UrlSpecials
+\def\do#1#2{\@namedef{bb@url@\string#1}{#2}}
+\UrlNobreakSpecials
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% CROSS-REFERENCE CITATIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\def\fc@this{%
+    \@ifundefined{r@\@this@page}{%
+	\protect\G@refundefinedtrue
+	\nfss@text{\reset@font\bfseries ??}%
+	\@latex@warning{Reference `\@this@page' on \thepage \space undefined}%
+    }{%
+	\ifx\@this@opt\relax
+	    \protected@edef\@this@opt{%
+		\expandafter\bb@xref@get
+		    \csname r@\@this@page\endcsname\@firstoftwo
+	    }%
+	\fi
+	\ifx\@this@opt\@empty\else\expandafter\@capnext\@this@opt\space\fi
+	\@ifundefined{bbr@\@this@page}{\bb@fn@sig{infra}}{\bb@fn@sig{supra}}
+	\expandafter\bb@xref@get\csname r@\@this@page\endcsname\@secondoftwo
+    }%
+}
+\def\pc@this#1{#1}
+\let\idc@this\fc@this
+\def\bb@xref@get#1#2{\expandafter#2#1}%
+\@test \if@bb@review \fi {
+    \newcommand*\bblabel[2][]{\@bsphack
+      \global\expandafter\let\csname bbr@#2\endcsname\@empty
+      \begingroup
+      \let\#\@currentlabel
+      \if@bb@note
+	  \protected@write\@auxout{}%
+		 {\string\newlabel{#2}{{#1}{note~\the\c@footnote}}}%
+      \else
+	  \protected@write\@auxout{}%
+		 {\string\newlabel{#2}{{#1}{p\@.~\thepage}}}%
+      \fi
+      \endgroup
+      \@esphack}
+}{
+    \newcommand*\bblabel[2][]{\@bsphack
+      \global\expandafter\let\csname bbr@#2\endcsname\@empty
+      \begingroup
+      \let\#\@currentlabel
+      \protected@write\@auxout{}%
+	     {\string\newlabel{#2}{{#1}{p\@.~\thepage}}}%
+      \endgroup
+      \@esphack}
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% ORDINAL NUMBERS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+% Produces a textual representation of an ordinal number:
+% 1 -> First
+% 10 -> Tenth
+% 45 -> Forty-Fifth
+% 123 -> 123d
+% 10000 -> Ten Thousandth
+% The argument must be the number--in numerical form, not a count register.
+% There is NO ERROR CHECKING, so make sure that the input is really a pure
+% number.
+\def\bb@numtotxt#1{%
+    \ifnum#1<100
+	\bb@numtotxt@xx#1\@stop
+    \else
+	\bb@numtotxt@big#1\@stop
+    \fi
+    \bb@numtoord{#1}%
+}
+\def\bb@numtoord#1{\bb@numtoord@#1\@stop\@empty}
+\def\bb@numtoord@#1#2\@stop{%
+    \@ifempty{#2}{%
+	\ifcase#1 th\or st\or d\or d\else th\fi
+    }{%
+	\@ifonechar{#2}{\ifnum#1=\@ne th\expandafter\bb@eatto@empty\fi}{}%
+	\bb@numtoord@#2\@stop
+    }%
+}
+% Formats a number between zero and 99.
+\def\bb@numtotxt@xx#1#2\@stop{%
+    \@ifempty{#2}{%
+	\ifcase#1 Zero\or Fir\or Secon\or Thir\or Four\or Fif\or Six\or Seven\or
+	    Eigh\or Nin\fi
+    }{%
+	\ifnum #1=\@ne
+	    \ifnum #2=9 Nineteen\else
+		\ifcase #2 Ten\or Eleven\or Twelf%
+		\else \bb@numtotxt@xx#2\@stop teen\fi
+	    \fi
+	\else
+	    \bb@numtotxt@c#1#2\@stop
+	\fi
+    }%
+}
+% Formats a tens digit between 20 and 90.
+\def\bb@numtotxt@c#1#2\@stop{%
+    \bb@numtotxt@tens#1{}%
+    \ifnum#2=\z@ ie\else y-\bb@numtotxt@xx#2\@stop\fi
+}
+% Tens digit. The second argument specifies the trailing letter (the "y" that is
+% common to all tens digit values is not there) if the value is not 1(0).
+\def\bb@numtotxt@tens#1#2{%
+    \ifcase #1 \or Ten\or Twent\or Thirt\or Fort\or Fift\or Sixt\or Sevent\or
+	Eight\or Ninet\fi
+    \ifnum#1=\@ne\else#2\fi
+}
+% Single units.
+\def\bb@numtotxt@ones#1{%
+    \ifcase#1 \or One\or Two\or Three\or Four\or Five\or Six\or Seven\or
+	Eight\or Nine\fi
+}
+%
+% Formats a number over 100. The rule: if the number is a single digit and then
+% zeroes, then write the number as text. Otherwise write it numerically.
+%
+% This macro uses two tricks: first, it compares the number (without the first
+% digit) to zero. Then, it uses the \@expand macro in an innovative way.
+% \@expand will expand its second argument once for every token in the third
+% argument. So we set the third argument to the list of zeroes, and define a
+% ``chain'' of macros reflecting powers of ten. The length of the zeroes list
+% will determine how far to expand, and then the remaining macro will tell us
+% how to format the text.
+\def\bb@numtotxt@big#1#2\@stop{%
+    \ifnum0#2=\z@
+	\@expand{\bb@numtotxt@bigtonum#1{#2}}\bb@numtotxt@One{#2}%
+    \else\bb@numtotxt@comma{#1#2}\fi
+}
+\def\bb@numtotxt@bigtonum#1#2#3{%
+    \ifx#3\relax
+	\bb@numtotxt@comma{#1#2}%
+    \else
+	\@ifundefined{\expandafter\@gobble\string#3@prn}{%
+	    \bb@numtotxt@ones#1 \expandafter\bb@numtotxt@gobble\string#3\@stop
+	}{%
+	    \@nameuse{\expandafter\@gobble\string#3@prn}{#1}%
+	}%
+    \fi
+}
+%
+% This defines \bb@numtotxt@gobble, which gobbles the \bb@numtotxt@ that
+% precedes the power-of-ten name in the macro.
+\edef\act{%
+    \noexpand\def
+    \noexpand\bb@numtotxt@gobble\string\bb@numtotxt@##1\noexpand\@stop{##1}%
+}\act
+\def\bb@numtotxt@One{\bb@numtotxt@Ten}
+\def\bb@numtotxt@Ten{\bb@numtotxt@Hundred}
+\def\bb@numtotxt@Hundred{\bb@numtotxt@Thousand}
+\def\bb@numtotxt@Thousand{\bb@numtotxt@tthousand}
+\def\bb@numtotxt@tthousand@prn#1{\bb@numtotxt@tens#1{y} Thousand}
+\@expand{\def\bb@numtotxt@tthousand}{\csname bb@numtotxt@Hundred
+    Thousand\endcsname}{i}
+\@namedef{bb@numtotxt@Hundred Thousand}{\bb@numtotxt@Million}
+\def\bb@numtotxt@Million{\relax}
+%
+% Adds commas to a number, in groups of three. Uses a similar trick with
+% \@expand for token-counting, and a three-chain circular link of macros, which
+% dictate where to place the first comma.
+\def\bb@numtotxt@comma#1{%
+    \ifnum#1<\@M #1%
+    \else\@expand{\bb@numtotxt@comma@{#1}}\bb@numtotxt@commaiii{#1}\fi
+}
+\def\bb@numtotxt@comma@#1#2{%
+    \@nameuse{\expandafter\@gobble\string#2@do}#1\@stop
+}
+\def\bb@numtotxt@commai{\bb@numtotxt@commaii}
+\def\bb@numtotxt@commaii{\bb@numtotxt@commaiii}
+\def\bb@numtotxt@commaiii{\bb@numtotxt@commai}
+\def\bb@numtotxt@commai@do#1#2\@stop{#1,\bb@numtotxt@commaiii@do#2\@stop}
+\def\bb@numtotxt@commaii@do#1#2#3\@stop{#1#2,\bb@numtotxt@commaiii@do#3\@stop}
+\def\bb@numtotxt@commaiii@do#1#2#3#4\@stop{%
+    #1#2#3\@ifnotempty{#4}{,\bb@numtotxt@commaiii@do#4\@stop}%
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% NOTES
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Conditional for determining when we're inside a note.
+\newif\if@bb@note \@bb@notefalse
+%
+% Citations-per-footnote counter.
+\if@bb@review
+    \newcount\bb@note@cites
+    \def\bb@note@advance{\advance\bb@note@cites\@ne}
+    \def\bb@note@advance@undo{\advance\bb@note@cites\m@ne}
+    \def\bb@note@advance@id{\ifnum\bb@note@cites=\z@\bb@note@advance\fi}
+    \def\bb@notepos#1{%
+	\ifnum\the\csname dfc@#1\endcsname=\c@footnote\else
+	    \space note~\the\csname dfc@#1\endcsname
+	\fi
+    }%
+\else
+    \let\bb@note@advance\@empty
+    \let\bb@note@advance@undo\@empty
+    \let\bb@note@advance@id\@empty
+    \let\bb@notepos\@gobble
+\fi
+%
+% We redefine \@footnotetext to turn on our conditional, within the group, at
+% the right time.
+%
+% Only do this stuff for law review articles.
+\if@bb@review\expandafter\@iden\else\expandafter\@gobble\fi {%
+    \@test \ifx\bb@endnotes\relax \fi {%
+	% Footnotes
+	\long\def\@footnotetext#1{\insert\footins{%
+	    \reset@font\footnotesize
+	    \interlinepenalty\interfootnotelinepenalty
+	    \splittopskip\footnotesep
+	    \splitmaxdepth \dp\strutbox \floatingpenalty \@MM
+	    \hsize\columnwidth \@parboxrestore
+	    \protected@edef\@currentlabel{%
+	       \csname p@footnote\endcsname\@thefnmark
+	    }%
+	    \color@begingroup
+	      \@makefntext{%
+		\bb@footnote@pre
+		\rule\z@\footnotesep\ignorespaces#1\@finalstrut\strutbox
+		\bb@footnote@post
+	      }%
+	    \color@endgroup}}%
+    }{% Endnotes
+	\newbox\bb@endnotes
+	\long\def\@footnotetext#1{%
+	    \global\setbox\bb@endnotes\vbox{%
+		\ifvoid\bb@endnotes\else
+		    \prevdepth\dp\bb@endnotes
+		    \unvbox\bb@endnotes
+		\fi
+		\reset@font\normalsize
+		\protected@edef\@currentlabel{%
+		   \csname p@footnote\endcsname\@thefnmark
+		}%
+		\color@begingroup
+		\@makefntext{%
+		    \bb@footnote@pre
+		    \ignorespaces#1%
+		    \bb@footnote@post
+		}%
+		\color@endgroup
+	    }%
+	}%
+	\def\theendnotes{%
+	    \setbox\bb@endnotes\vtop{\unvbox\bb@endnotes}%
+	    \@tempskipa\baselineskip
+	    \multiply\@tempskipa\m@ne
+	    \advance\@tempskipa\prevdepth
+	    \advance\@tempskipa\ht\bb@endnotes
+	    \multiply\@tempskipa\m@ne
+	    \ifdim\@tempskipa>\z@ \vskip\@tempskipa \fi
+	    \unvbox\bb@endnotes
+	}
+	\AtEndDocument{%
+	    \ifvoid\bb@endnotes\else
+		\PackageWarning\bb@pkgname{%
+		    Endnotes not displayed;\MessageBreak inserting them%
+		}%
+		\vskip\baselineskip
+		\footnoterule
+		\theendnotes
+	    \fi
+	}%
+    }% End of if (endnotes)
+    \def\bb@footnote@pre{%
+	\@bb@notetrue
+	\bb@note@cites\z@
+    }
+    \def\bb@footnote@post{%
+	\ifnum\bb@note@cites=\@ne
+	    \global\let\@last@case\@last@case
+	    \global\let\@last@page\@last@page
+	\else
+	    \global\let\@last@case\relax
+	    \global\let\@last@page\relax
+	\fi
+	\global\let\@last@inline\relax
+    }
+} % End of footnote modifications for law review only
+%
+% HTML Modifications
+\@test \if@bb@html \fi{
+    \newif\if@bb@htfn
+    \def\@makefnmark{%
+	\if@bb@htfn
+	    \bb@tag{sup}{%
+		\bb@tag{a id="fn\@thefnmark" href="\#tn\@thefnmark"}\@thefnmark
+	    }\@bb@htfnfalse
+	\else
+	    \bb@tag{sup}{%
+		\bb@tag{a id="tn\@thefnmark" href="\#fn\@thefnmark"}\@thefnmark
+	    }\@bb@htfntrue
+	\fi
+    }
+}\relax
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% FONTS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+% Font of emph when non-emph, does nothing when emph.
+\DeclareRobustCommand\@capemph{\@capfont\emph}
+\DeclareRobustCommand\@capit{\@capfont\textit}
+\DeclareRobustCommand\@capsc{\@capfont\textsc}
+\DeclareRobustCommand\@caprm{\@capfont\@iden}
+\DeclareRobustCommand\bb@maybeemph{\bb@ifemph\@iden\emph}
+% We need two sets of fonts: one for law reviews, and one for memoranda.
+\if@bb@reviewfonts
+    %
+    % Law Review Fonts
+    %
+    \let\bb@fn@bookauthor\@capsc   % BB R. 15.1.1
+    \let\bb@fn@booktitle\@capsc    % BB R. 15.2
+    \let\bb@fn@arttitle\@capemph   % BB R. 16.2
+    \let\bb@fn@webtitle\@capemph   % New BB rule
+    \let\bb@fn@jrntitle\@capsc     % BB R. 16
+    \let\bb@fn@caseproc\bb@maybeemph % BB R. 2(a) Procedural phrase in case
+    \let\bb@fn@caseinl\@capemph    % BB R. 2(a) Inline case citation
+    \let\bb@fn@casefc\@caprm       % BB R. 2(a) Case full citation
+    \let\bb@fn@casesc\@capemph     % BB R. 2(a) Case short citation
+    \let\bb@fn@tvtitle\@capemph    % BB R. 18.5 TV Show title
+    \let\bb@fn@const\@capsc        % BB R. 11 constitution title
+    \let\bb@fn@statute\@capsc      % BB R. 12 statute code cited
+%
+\else
+    %
+    % Legal Memoranda Fonts
+    %
+    \let\bb@fn@bookauthor\@caprm
+    \let\bb@fn@booktitle\@capemph
+    \let\bb@fn@arttitle\@capemph
+    \let\bb@fn@webtitle\@capemph   % New BB rule
+    \let\bb@fn@jrntitle\@caprm
+    \let\bb@fn@caseproc\bb@maybeemph
+    \let\bb@fn@caseinl\@capemph
+    \let\bb@fn@casefc\@capemph
+    \let\bb@fn@casesc\@capemph
+    \let\bb@fn@tvtitle\@capemph    % BB R. 18.5 TV Show title
+    \let\bb@fn@const\@caprm
+    \let\bb@fn@statute\@caprm      % BB R. 12 statute code cited
+\fi
+\let\bb@fn@sig\bb@maybeemph      % Signal font
+\let\bb@fn@ell\bb@maybeemph      % Font for ``(l)''
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% CASE TITLE FORMATION
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Analyzes the current citation parameters, and sets up all the title forms for
+% cases. These forms are:
+% 1. The full title
+% 2. The abbreviated full title
+% 3. The abbreviated TOA-form title
+% 3. The short form
+% 4. The abbreviated short form
+\def\bb@case@proc{%
+    \begingroup
+	\let\bb@tmp@preinline\@empty
+	\let\bb@tmp@runlast\@empty
+	\bb@ifset\bb@kv@inline{%
+	    \bb@ifset\bb@kv@ainline\relax{%
+		\@expand\bb@abbrev@name\bb@kv@inline i{\def\bb@kv@ainline}%
+	    }%
+	    \def\bb@tmp@runlast{%
+		\aftergroup\bb@case@proc@paren
+	    }%
+	}\relax
+	\bb@ifset\bb@kv@name{%
+	    \expandafter\bb@case@procname\expandafter{\bb@kv@name}%
+	}\relax
+	\bb@ifset\bb@kv@p\bb@case@procparties\relax
+	\protected@xdef\bb@kv@inline{%
+	    \bb@tmp@preinline\protect\bb@fn@caseinl{\bb@kv@inline}%
+	}%
+	\protected@xdef\bb@kv@ainline{\protect\bb@fn@casesc{\bb@kv@ainline}}%
+	\bb@tmp@runlast
+    \endgroup
+}
+\def\bb@case@proc@paren{%
+    \protected@edef\reserved@a{%
+        \noexpand\in@{\bb@kv@inline}{\bb@kv@p;\bb@kv@d;\bb@kv@name}%
+    }\reserved@a
+    \ifin@\else
+        \protected@xdef\bb@kv@name{%
+            \bb@kv@name\space(\bb@kv@inline)%
+        }%
+        \expandafter\push@toks\expandafter\bb@param@parens\expandafter{%
+            \expandafter\bb@addparen\expandafter\bb@paren@casealt\expandafter{%
+                \bb@kv@ainline
+            }%
+        }%
+    \fi
+}
+%
+% If there is a name or title defined, process that.
+\def\bb@case@procname#1{%
+    \let\bb@tmp@proc\@empty
+    \let\bb@tmp@the\@empty
+    \bb@alwaysabb{#1}{\def\bb@tmp@base}%
+    \let\bb@tmp@exrel\@empty
+    % Split
+    \chop@prefix{In re }{#1}{\def\bb@tmp@proc{In re}\def\bb@tmp@base}%
+    \chop@prefix{Ex parte }{#1}{\def\bb@tmp@proc{Ex parte}\def\bb@tmp@base}%
+    \bb@ifset\bb@kv@p\relax{%
+	\@expand{\chop@prefix{The }}\bb@tmp@base i{%
+	    \def\bb@tmp@the{\@capnext the }\def\bb@tmp@base
+	}%
+    }%
+    \@expand\bb@case@splitexrel\bb@tmp@base i\bb@tmp@base\bb@tmp@exrel
+    % Abbreviate
+    \@expand\bb@abbrev@name\bb@tmp@base i{\def\bb@tmp@abase}%
+    \@expand\bb@abbrev@name\bb@tmp@exrel i{\def\bb@tmp@aexrel}%
+    % Make Results
+    \protected@xdef\bb@kv@name{%
+	\ifx\bb@tmp@proc\@empty
+	    \bb@tmp@the
+	\fi
+	\protect\bb@fn@caseinl{%
+	    \ifx\bb@tmp@proc\@empty\else
+		\protect\bb@fn@caseproc{\bb@tmp@proc} % Procedural phrase, space
+		\ifx\bb@tmp@the\@empty\else The \fi
+	    \fi
+	    \bb@tmp@base
+	    \ifx\bb@tmp@exrel\@empty\else
+		\bb@case@drawexrel
+		\bb@tmp@exrel
+	    \fi
+	}%
+    }%
+    \protected@xdef\bb@kv@aname{%
+	\ifx\bb@tmp@proc\@empty\else
+	    \protect\bb@fn@caseproc{\bb@tmp@proc} % Procedural phrase, space
+	\fi
+	\protect\bb@fn@casefc{%
+	    \ifx\bb@tmp@the\@empty\else The \fi
+	    \bb@tmp@abase
+	    \ifx\bb@tmp@aexrel\@empty\else
+		\bb@case@drawexrel
+		\bb@tmp@aexrel
+	    \fi
+	}%
+    }%
+    \global\let\bb@kv@sname\bb@kv@aname
+    % Choose inline name
+    \bb@ifset\bb@kv@p\relax{%
+	\ifx\bb@tmp@exrel\@empty
+	    \bb@case@setinls\bb@tmp@base\bb@tmp@abase\bb@tmp@the
+	\else
+	    \bb@case@setinls\bb@tmp@exrel\bb@tmp@aexrel{}%
+	\fi
+    }%
+}
+%
+% If the case has party names, we must form the full titles and then pick the
+% party for the short form.
+%
+% There are two parties, plaintiff and defendant. Each party may contain two
+% components, a base and an ex-rel.
+\def\bb@case@procparties{%
+    \bb@case@procplaintiff
+    \bb@case@procdefendant
+    % Make results
+    \protected@xdef\bb@kv@name{%
+	\protect\bb@fn@caseinl{\bb@tmp@p\protect~v. \bb@tmp@d}%
+	\bb@ifset\bb@kv@name{ (\bb@kv@name)}{}%
+    }
+    \protected@xdef\bb@kv@aname{%
+	\protect\bb@fn@casefc{\bb@tmp@pa\protect~v. \bb@tmp@da}%
+	\bb@ifset\bb@kv@aname{ (\bb@kv@aname)}{}%
+    }
+    \bb@case@chooseparty
+}
+%
+% Choose the party for the short form. Assumes all the \bb@tmp@... variables
+% have been set.
+\def\bb@case@chooseparty{%
+    %
+    % Pick one of four elements as case citation name. We:
+    % 1. Prefer plaintiffs over defendants
+    % 2. Prefer the base name over the ex rel. object
+    % Subject to the constraints of the valid-party algorithm.
+    \bb@case@procparties@try\bb@tmp@pbase\bb@tmp@pabase\bb@case@usep
+    \bb@case@procparties@try\bb@tmp@dbase\bb@tmp@dabase\bb@case@used
+    \bb@case@procparties@try\bb@tmp@pexrel\bb@tmp@paexrel\bb@case@usepx
+    \bb@case@procparties@try\bb@tmp@dexrel\bb@tmp@daexrel\bb@case@usedx
+    %
+    % If no party is selected by the valid-party algorithm, then we must pick
+    % one by force. We:
+    % 1. Prefer plaintiffs over defendants
+    % 2. Prefer the ex-rel object, because the base name is usually State in
+    % such cases.
+    \bb@case@procparties@use\bb@tmp@pexrel\bb@tmp@paexrel\bb@case@usepx
+    \bb@case@procparties@use\bb@tmp@dexrel\bb@tmp@daexrel\bb@case@usedx
+    \bb@case@procparties@use\bb@tmp@pbase\bb@tmp@pabase\bb@case@usep
+    \bb@case@procparties@use\bb@tmp@dbase\bb@tmp@dabase\bb@case@used
+    \bb@case@setinl{\protect\bb@noinlnamewarn}{\protect\bb@noinlnamewarn}%
+    \@empty
+}
+%
+% These four functions determine the TOA form based on which short form is
+% picked. "p" means plaintiff; "x" means the ex-rel part rather than base.
+\def\bb@case@usep{\global\let\bb@kv@sname\bb@kv@aname}
+\def\bb@case@usepx{\global\let\bb@kv@sname\bb@kv@aname}
+\def\bb@case@used{\global\let\bb@kv@sname\bb@kv@aname}
+\def\bb@case@usedx{\global\let\bb@kv@sname\bb@kv@aname}
+%
+% Runs \bb@case@tryparty or \bb@case@useparty.
+\def\bb@case@procparties@try#1#2#3{\@expand\bb@case@tryparty#1i#1#2#3}
+\def\bb@case@procparties@use#1#2#3{\@expand\bb@case@useparty#1i#1#2#3}
+%
+% Warning if no party is selected at all.
+\def\bb@noinlnamewarn{%
+    \textbf{???}\PackageWarning\bb@pkgname{Couldn't choose party name}%
+}
+%
+% Pick the party as long as it's not empty.
+\def\bb@case@useparty#1#2#3#4{%
+    \@ifnotempty{#1}{\bb@case@setinls{#2}{#3}{}#4\bb@eatto@empty}%
+}
+%
+% Pick the party if:
+% 1. It's not empty
+% 2. It's not in the no-cite list
+% 3. It doesn't contain the word "of"
+% 4. Its first two letters are not capitals
+\def\bb@case@tryparty#1#2#3#4{%
+    \let\bb@case@tryparty@@\@empty
+    \text@syms
+    \@ifnotempty{#1}{%
+	\expandafter\ifx\csname nocite@#1\endcsname\NotMainParty
+	    \restore@syms
+	\else
+	    \restore@syms
+	    \in@{ of }{#1}\ifin@\else
+		\bb@case@tryparty@#1aa\@stop{#2}{#3}{#4}%
+	    \fi
+	\fi
+	\bb@case@tryparty@@
+    }%
+}
+%
+% Test if the party starts with two capitals.
+\def\bb@case@tryparty@#1#2#3\@stop#4#5#6{%
+    \def\bb@case@tryparty@@{\bb@case@setinls{#4}{#5}{}#6\bb@eatto@empty}%
+    \ifcat\noexpand#1a\ifcat\noexpand#2a%
+	\ifnum`#1=\uccode`#1\relax\ifnum`#2=\uccode`#2\relax
+	    \let\bb@case@tryparty@@\@empty
+	\fi \fi
+    \fi \fi
+}
+%
+% Initialize the plaintiff variables.
+\def\bb@case@procplaintiff{%
+    \@expand\bb@alwaysabb\bb@kv@p i{\def\bb@tmp@pbase}%
+    \let\bb@tmp@pexrel\@empty
+    % Split
+    \@expand\bb@case@splitexrel\bb@tmp@pbase i\bb@tmp@pbase\bb@tmp@pexrel
+    % Abbreviate
+    \@expand\bb@abbrev@name\bb@tmp@pbase i{\def\bb@tmp@pabase}%
+    \@expand\bb@abbrev@name\bb@tmp@pexrel i{\def\bb@tmp@paexrel}%
+    % Make intermediates
+    \protected@edef\bb@tmp@p{%
+	\bb@tmp@pbase
+	\ifx\bb@tmp@pexrel\@empty\else
+	    \bb@case@drawexrel
+	    \bb@tmp@pexrel
+	\fi
+    }%
+    \protected@edef\bb@tmp@pa{%
+	\bb@tmp@pabase
+	\ifx\bb@tmp@paexrel\@empty\else
+	    \bb@case@drawexrel
+	    \bb@tmp@paexrel
+	\fi
+    }%
+}
+%
+% Initialize the defendant variables.
+\def\bb@case@procdefendant{%
+    \@expand\bb@alwaysabb\bb@kv@d i{\def\bb@tmp@dbase}%
+    \let\bb@tmp@dexrel\@empty
+    % Split
+    \@expand\bb@case@splitexrel\bb@tmp@dbase i\bb@tmp@dbase\bb@tmp@dexrel
+    % Abbreviate
+    \@expand\bb@abbrev@name\bb@tmp@dbase i{\def\bb@tmp@dabase}%
+    \@expand\bb@abbrev@name\bb@tmp@dexrel i{\def\bb@tmp@daexrel}%
+    % Make intermediates
+    \protected@edef\bb@tmp@d{%
+	\bb@tmp@dbase
+	\ifx\bb@tmp@dexrel\@empty\else
+	    \bb@case@drawexrel
+	    \bb@tmp@dexrel
+	\fi
+    }%
+    \protected@edef\bb@tmp@da{%
+	\bb@tmp@dabase
+	\ifx\bb@tmp@daexrel\@empty\else
+	    \bb@case@drawexrel
+	    \bb@tmp@daexrel
+	\fi
+    }%
+}
+%
+% Split by "ex rel." and set the parts to two macros.
+\def\bb@case@splitexrel#1#2#3{%
+    \@split{ ex rel. }{#1}{\bb@case@splitexrel@{#2}{#3}}%
+}
+\def\bb@case@splitexrel@#1#2#3#4{\def#1{#3}\def#2{#4}}
+%
+% Draw the word "ex rel.", with spaces and fonts.
+\def\bb@case@drawexrel{ \protect\bb@fn@caseproc{ex rel.} }
+%
+% Set the inline variables, if they are not preset.
+\def\bb@case@setinls#1#2#3{%
+    \bb@ifset\bb@kv@inline{%
+	\bb@ifset\bb@kv@ainline\relax{%
+	    \@expand\bb@abbrev@name\bb@kv@inline i{\def\bb@kv@ainline}%
+	}%
+    }{%
+	\protected@edef\bb@kv@inline{#1}%
+	\def\bb@tmp@preinline{#3}%
+    }%
+    \bb@ifset\bb@kv@ainline\relax{%
+	\protected@edef\bb@kv@ainline{#2}%
+    }%
+}
+\DeclareRobustCommand\bb@the{\if@bb@inline \@capnext t\else T\fi he }
+%
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% USER HELP AND INFORMATION
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Show all the available citation parameters.
+\def\showparameters{%
+    \immediate\write16{Citation Parameters^^J****************}%
+    \begingroup
+	\def\do##1##2{%
+	    \immediate\write16{%
+		\expandafter\@gobblebb@kv\string##1\@stop%
+		##2%
+	    }%
+	}%
+	\bb@params
+    \endgroup
+    \immediate\write16{}%
+}
+%
+% Show all available citation types
+\def\showciteforms{%
+    \immediate\write16{Citation forms^^J****************}%
+    \begingroup
+	\def\do##1##2{%
+	    \immediate\write16{%
+		\expandafter\bb@tabtext\expandafter{\string##1}##2%
+	    }%
+	}%
+	\bb@citeforms
+    \endgroup
+    \immediate\write16{}%
+}
+\def\bb@lotsofempty{%
+    \@empty \@empty \@empty \@empty \@empty
+    \@empty \@empty \@empty \@empty \@empty
+    \@empty \@empty \@empty \@empty \@empty
+}
+\def\bb@tabtext#1{%
+    #1%
+    \@expand{\expandafter\@make@spaces\@iden}{%
+	\bb@lotsofempty
+	\relax
+    }{i#1}%
+}
+\def\@make@spaces#1\relax{%
+    \space\@ifnotempty{#1}{\expandafter\@make@spaces#1\relax}%
+}
+\expandafter\def\expandafter\@gobblebb@kv\string\bb@kv@#1\@stop{\bb@tabtext{#1}}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% PROCEDURAL HISTORY
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+% Initialization of procedural explanatory phrases.
+%
+% Table 9 abbreviations.
+%
+\newcommand\ExplanatoryPhrase[1]{%
+    \bb@abbrev@name@{#1}{\def\reserved@a}{bb@t9@}%
+    \expandafter\let\csname bb@exp@\bb@chopcomma#1,\@stop\endcsname\reserved@a
+    \expandafter\let\csname
+	bb@exp@\expandafter\bb@chopcomma\reserved@a,\@stop
+    \endcsname\reserved@a
+}
+\def\bb@abbrev#1#2{\@namedef{bb@t9@#1}{#2}}
+\let\bb@multi@abbrev\ExplanatoryPhrase
+\input{bbtbl9}
+%
+%
+% Interpretation of case history
+%
+% Parses case history and creates appropriate parentheticals.
+\def\bb@case@history{%
+    \bb@ifset\bb@kv@prior{%
+	\let\bb@tmp@and\@empty
+        \@expand\bb@case@split@expl\bb@kv@prior{i}{}\bb@paren@prior
+        %\def\bb@tmp@and{and }% For supporting multiple entries
+    }\relax
+    \bb@ifset\bb@kv@subsequent{%
+	\let\bb@tmp@and\@empty
+        \@expand\bb@case@split@expl\bb@kv@subsequent{i}%
+                {sub nom.}\bb@paren@subseq
+        % \def\bb@tmp@and{and }%
+    }\relax
+}
+\def\bb@case@split@expl#1#2#3{%
+    % Split the text into explanatory phrase and citation. The phrase is put in
+    % \bb@expl@phrase, and the citation is in \bb@expl@cite.
+    \bb@expl@split{#1}%
+    \@ifundefined{bb@exp@\bb@expl@phrase}{%
+	% If the explanatory phrase is not known, then (1) warn and (2)
+	% abbreviate the name.
+	\bb@noexpl
+	\expandafter\bb@abbrev@name@\expandafter{\bb@expl@phrase}{%
+	    \def\bb@expl@phrase
+	}{bb@t9@}%
+    }{%
+	% Otherwise, set the explanatory phrase to the known form (which is
+	% abbreviated and has appropriate commas).
+	\expandafter\let\expandafter\bb@expl@phrase
+		\csname bb@exp@\bb@expl@phrase\endcsname
+    }%
+    % Add the optional "and" to the front of the phrase
+    \protected@edef\bb@expl@phrase{\bb@tmp@and\bb@expl@phrase}%
+    % Add the parenthetical
+    \@expand{\@expand\bb@expl@addparen\bb@expl@phrase i}\bb@expl@cite i{#2}{#3}%
+}
+\def\bb@expl@addparen#1#2#3#4{%
+    \push@toks\bb@param@parens{\bb@addparen#4{\bb@expl{#1}{#2}{#3}}}%
+}
+\def\bb@expl#1#2#3{%
+    \begingroup
+	\bb@start@cite
+	\bb@expl@determinename{#1}{#2}%
+	\bb@drawexpl{#1}{#3}%
+	\fullcite{#2}%
+	\bb@citeone{#2}{}%
+	\bb@end@cite
+    \endgroup
+}
+\def\bb@drawexpl#1#2{%
+    \bb@fn@sig{%
+	\@no@dot@space\bb@chopcomma#1,\@stop
+	% We put "sub nom." if:
+	%   - there is a comma (no "overruled by sub nom.")
+	%   - the name is being displayed (\if@bb@name is true)
+	%   - the #2 text contains something
+	\bb@ifcomma#1,\@stop{\if@bb@name#2\fi}\@empty
+    }%
+    % We display the comma if:
+    %   - There was a comma in the original
+    %   - No sub nom. was displayed, i.e.,
+    %     - Either \if@bb@name is false, or
+    %     - The #2 text is empty
+    \bb@ifcomma#1,\@stop{%
+	\if@bb@name\@ifnotempty{#2}{\expandafter\@gobble}\fi{\unkern,}%
+    }{} % Space
+}
+\def\bb@expl@noname{%
+    cert. denied,; and cert. denied,; reh'g denied,; and reh'g denied,%
+}
+\def\bb@expl@determinename#1#2{%
+    \@expand{\in@{#1}}\bb@expl@noname i\ifin@ \@bb@namefalse \else % R10.7.2(ii)
+	\edef\reserved@a{%
+	    \noexpand\bb@expl@determinename@
+		\expandafter\noexpand\csname case@#2@p\endcsname
+		\expandafter\noexpand\csname case@#2@d\endcsname
+		\expandafter\noexpand\csname case@#2@name\endcsname
+		\expandafter\noexpand\csname case@\@this@case @p\endcsname
+		\expandafter\noexpand\csname case@\@this@case @d\endcsname
+		\expandafter\noexpand\csname case@\@this@case @name\endcsname
+	}\reserved@a
+    \fi
+}
+\def\bb@expl@determinename@#1#2#3#4#5#6{% Determination of BB R. 10.7.2(i,iii)
+    \@bb@nametrue
+    \ifx#1#4\ifx#2#5\@bb@namefalse\fi\fi % (i)
+    \ifx#1#5\ifx#2#4\@bb@namefalse\fi\fi
+    \bb@ifset#1{}{% (iii)
+	\ifx#3#4\@bb@namefalse\fi
+	\ifx#3#5\@bb@namefalse\fi
+	\ifx#3#6\@bb@namefalse\fi
+    }%
+    \bb@ifset#4{}{%
+	\ifx#6#1\@bb@namefalse\fi
+	\ifx#6#2\@bb@namefalse\fi
+	\ifx#6#3\@bb@namefalse\fi
+    }%
+}
+%
+% Parsing of procedural history to get explanatory phrase and citation.
+\def\bb@expl@split#1{%
+    \let\bb@expl@phrase\@empty
+    \let\bb@expl@cite\@empty
+    % If there's a colon, then split by that.
+    \in@{:}{#1}\ifin@ \@split{:}{#1}\bb@case@hist@ \else
+	% If there's a comma, split by that.
+	\in@{,}{#1}\ifin@
+	    \@split{,}{#1}\bb@case@hist@
+	    \@ifundefined{bb@exp@\bb@expl@phrase}{%
+		% If undefined phrase, assume the comma was intentional
+		\addto@macro\bb@expl@phrase{,}%
+	    }\relax
+	\else
+	    % Otherwise, split off each word in order. The last word is the
+	    % citation; the others are the phrase.
+	    \let\bb@expl@phrase\@empty \let\bb@expl@cite\@empty
+	    \process@words{#1}\bb@expl@wd\bb@expl@wd\bb@expl@spc
+	\fi
+    \fi
+    % Error check: both phrase and citation must be filled. must
+    \ifx\bb@expl@phrase\@empty \bb@expl@err \fi
+    \ifx\bb@expl@cite\@empty \bb@expl@err \fi
+}
+\def\bb@case@hist@#1#2{%
+    \protected@edef\bb@expl@cite{\chop@space{#2}}%
+    \protected@edef\bb@expl@phrase{\chop@space{#1}}%
+}
+\def\bb@expl@wd#1{\addto@macro\bb@expl@cite{#1}}
+\def\bb@expl@spc{%
+    \ifx\bb@expl@phrase\@empty
+	\expandafter\addto@macro\expandafter\bb@expl@phrase\expandafter{%
+	    \bb@expl@cite
+	}%
+    \else
+	\@expand{\addto@macro\bb@expl@phrase}{%
+	    \expandafter\space\bb@expl@cite
+	}{ii}%
+    \fi
+    \let\bb@expl@cite\@empty
+}
+%
+% Warnings and errors.
+\def\bb@noexpl{%
+    \begingroup
+	\PackageWarning\bb@pkgname{%
+	    Explanatory phrase was not previously known.\MessageBreak
+	    Use \noexpand\ExplanatoryPhrase{phrase} to define it.\MessageBreak
+	    Also, make sure your comma usage conforms to T.9.%
+	}%
+    \endgroup
+}
+\def\bb@expl@err{%
+    \PackageError\bb@pkgname{Explanatory phrase in history missing}{%
+	You must include explanatory history phrase and citation.
+    }%
+}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% DATE TESTING
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\def\bb@checkfulldate#1{%
+    \expandafter\bb@checkfulldate@#1 . . \@stop#1%
+}
+\def\bb@checkfulldate@#1 #2 #3 #4\@stop#5{%
+    \@ifempty{#4}{%
+	\bb@fulldate@err{#5}%
+    }{%
+	\@ifundefined{bb@mon@#1}{\bb@fulldate@err{#5}}\relax
+	\expandafter\bb@ifnumber\expandafter{\bb@chopcomma#2,\@stop}%
+		\relax
+		{\bb@fulldate@err{#5}}%
+    }%
+    \bb@ifnumber{#3}{%
+	\bb@ifcomma#2,\@stop \relax {\edef#5{#1 #2, #3}}%
+    }{%
+    }%
+}
+\def\bb@getyear#1#2{\bb@getyear@#1\@nil. , \@nil\@stop{#2}}
+\def\bb@getyear@#1 #2, #3\@nil#4\@stop#5{#5{#3}}
+\def\bb@ifnumber#1{%
+    \edef\reserved@a{\ifnum\m@ne<0#1 \fi}%
+    \ifx\reserved@a\@empty \expandafter\@firstoftwo
+    \else                  \expandafter\@secondoftwo\fi
+}
+\def\bb@fulldate@err#1{%
+    \PackageWarning\bb@pkgname{%
+	#1 is not a full date specification
+    }%
+}
+\def\do#1{\expandafter\let\csname bb@mon@#1\endcsname\@empty}
+\do{Jan.}\do{Feb.}\do{Mar.}\do{Apr.}\do{May}\do{June}\do{July}\do{Aug.}
+\do{Sept.}\do{Oct.}\do{Nov.}\do{Dec.}
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% HTML OUTPUT
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+\if@bb@html
+    % Draw an HTML tag
+    \DeclareRobustCommand\bb@tag[2]{$<$#1$>$#2$<$/\bb@tag@#1 \@stop$>$}
+    \def\bb@tag@#1 #2\@stop{#1}%
+    \DeclareRobustCommand\bb@onetag[1]{$<$#1$>$}
+    %
+    \def\emph#1{{\bb@tag{em}{#1}}}
+    \def\textit#1{{\bb@tag{i}{#1}}}
+    \def\textbf#1{{\bb@tag{b}{#1}}}
+    \def\textsc#1{{%
+	\bb@tag{span style="font-weight:normal;font-variant:small-caps"}{#1}%
+    }}
+    \def\em{\PackageError\bb@pkgname{You must use LaTeX font commands}}
+    \let\it\em
+    \let\bf\em
+    \let\sc\em
+    \AtBeginDocument{\bb@onetag{html}\bb@onetag{body}\par}
+    \AtEndDocument{\bb@onetag{/body}\bb@onetag{/html}\par}
+    \def\@startsection#1#2#3#4#5#6{\@ifstar{\bb@tag{h#2}}{\bb@tag{h#2}}}
+    \interlinepenalty=\@M
+    \parskip\baselineskip
+    \renewenvironment{quote}{\bb@onetag{blockquote}}{\bb@onetag{/blockquote}}
+    \renewenvironment{quotation}%
+		     {\bb@onetag{blockquote}}{\bb@onetag{/blockquote}}
+    \renewenvironment{enumerate}{%
+	\bb@onetag{ol}\def\item{\bb@onetag{li}}%
+    }{\bb@onetag{/ol}}
+    \renewenvironment{itemize}{%
+	\bb@onetag{ul}\def\item{\bb@onetag{li}}%
+    }{\bb@onetag{/ul}}
+    \defaulthyphenchar=\m@ne
+    \def\discretionary#1#2#3{#3}
+    \hfuzz\maxdimen
+    \vfuzz\maxdimen
+\fi
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% JOURNAL ABBREVIATIONS
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Abbreviate journal titles. Since journals are abbreviated in an unusual way,
+% we do not use the \bb@abbrev@name system. (Additionally, this allows me to try
+% out some new techniques for abbreviating.)
+%
+%
+% Removes the short words a, at, in, of, the (BB T.14) and runs command #2 on
+% the result
+\def\bb@jrnabb@rmwds#1#2{%
+    \let\reserved@a\@empty % Accumulates the result word
+    \@tempswafalse % True when a space has just been placed
+    \process@words{#1}\bb@jrnabb@rm@wd\bb@jrnabb@rm@wd\bb@jrnabb@rm@spc
+    \@expand{#2}\reserved@a i%
+}
+\def\bb@jrnabb@rm@wd#1{%
+    \in@{#1}{a at in of the ,}\ifin@\else
+	\addto@macro\reserved@a{#1}%
+	\@tempswafalse
+    \fi
+}
+\def\bb@jrnabb@rm@spc{%
+    \if@tempswa\else \addto@macro\reserved@a{ }\@tempswatrue \fi
+}
+%
+%
+% Abbreviation words are stored in a tree-like structure. Nodes are represented
+% by macros of the form:
+%   \bb@jab@[number]@[word]
+% There are also macros of the form:
+%   \bb@jab@[number]
+% which are called ``default'' nodes.
+%
+% There is a counter S that stores the current state of the ``abbreviation
+% machine.'' Initially S is zero.
+\newcount\bb@jrnabb@state \bb@jrnabb@state\z@
+\def\bb@jrnabb@abbrev#1#2{%
+    \let\reserved@a\@empty
+    \bb@jrnabb@state\z@
+    \def\bb@jrnabb@use##1{\addto@macro\reserved@a{##1}}%
+    \process@words{#1}\bb@jrnabb@wd\bb@jrnabb@wd\bb@jrnabb@spc
+    \@expand{#2}\reserved@a i%
+}
+%
+\def\bb@jrnabb@spc{\bb@jrnabb@wd{ }}
+\def\bb@jrnabb@wd#1{%
+% When we encounter a word or punctuation, we look up the command
+% \bb@jab@[S]@[word] and execute it.
+    \expandafter\let\expandafter\bb@jrnabb@wd@
+	    \csname bb@jab@\the\bb@jrnabb@state @#1\endcsname
+    \ifx\bb@jrnabb@wd@\relax
+%
+% If there is no such command, then we consider S. If S is zero, then we just
+% place the word. Otherwise, we execute \bb@jab@[S]. We then repeat the whole
+% process, with the same word.
+	\ifnum\bb@jrnabb@state=\z@
+	    \bb@jrnabb@use{#1}%
+	\else
+	    \@skipafi{\@skipafi{%
+		\csname bb@jab@\the\bb@jrnabb@state\endcsname
+		\bb@jrnabb@wd{#1}%
+	    }}%
+	\fi
+    \else \bb@jrnabb@wd@ \fi
+}%
+%
+% When there are no words left, if the state is not zero, run the default
+% command for that state. Keep doing so until the state becomes zero.
+\def\bb@jrnabb@finish{%
+    \ifnum\bb@jrnabb@state=\z@ \else
+	\csname bb@jab@\the\bb@jrnabb@state \endcsname
+	\expandafter\bb@jrnabb@finish
+    \fi
+}
+%
+% A ``terminal node'' is one that is an abbreviation match. A non-terminal node
+% is one that potentially may match. Consider the word ``Northern Mariana
+% Islands''. The program might store it as such:
+%
+%   \bb@jab@0@Northern: non-terminal that sets state to 5
+%   \bb@jab@5@Mariana:  non-terminal that sets state to 23
+%   \bb@jab@23@Islands: terminal that outputs ``N. Mar. I.'' and resets state
+%
+% A terminal node should perform the following tasks:
+%   Output the abbreviated form (using the appropriate mechanism)
+%   Set the state to zero
+%
+% Implemented as {\bb@jrnabb@term{[text]}}
+\def\bb@jrnabb@restore{%
+    \def\bb@jrnabb@term##1{\bb@jrnabb@use{##1}\bb@jrnabb@state\z@}
+%
+% A non-terminal node should simply set the state.
+%
+% Implemented as {\bb@jrnabb@nonterm{[state]}}
+    \def\bb@jrnabb@nonterm##1{\bb@jrnabb@state##1\relax}
+}
+\bb@jrnabb@restore
+%
+% When a default node is reached, it is because one or more words in the stream
+% appeared as candidates for abbreviation but did not come to fruition. However,
+% it may be the case that some of the initial words may be abbreviated; it may
+% even be the case that some of the last few words in the stream create a
+% candidate for another abbreviation. For example:
+%   New York => N.Y.
+%   New York Times => N.Y.T.
+%   Journal of Civil Rights => J.C.R.
+%   Civil Liberties Review => C.L.R.
+% Then:
+%   New York Times Two => N.Y.T. Two (NOT N.Y. Times Two)
+%   New York Magazine => N.Y. Magazine
+%   Journal of Civil Liberties Review => Journal of C.L.R.
+%
+% To handle those cases, default nodes must be implemented in the following way:
+%   Output either:
+%     the longest abbreviation from the first word you can make, or
+%     the first word
+%   Set the state to zero
+%   For each remaining word, run the algorithm
+%
+% Implemented as {\bb@jrnabb@default{front-text}\do{wd}\do{wd}\do{wd}...}
+% where \do is \bb@jrnabb@wd as appropriate.
+\def\bb@jrnabb@default#1{%
+    \bb@jrnabb@use{#1}\bb@jrnabb@state\z@
+}
+%
+%
+% Creating the table:
+%
+% Consider a piece of text (#1) and its abbreviation (#2). Split #1 up by words.
+% (Punctuation are words for our purposes.) Set the S to zero. Create a current
+% default text that is empty. 
+%
+% There are three conditions to consider:
+%   (1) If the word we're processing is the last one
+%   (2) If there is already a node for the word we're processing
+%   (3) If that existing node is terminal or not
+%
+% For each word:
+%   If \bb@jab@[S]@[word] exists,
+%     If it is a terminal node,
+%       If this is the last word, then do nothing (it's a duplicate entry).
+%       Otherwise, it's a potentially longer abbreviation:
+%         Pick a new state S'.
+%         Define \bb@jab@[S'] to output the abbreviation here.
+%         Set the current default text to the abbreviation here.
+%         Set the current state to S'.
+%     Otherwise, it's not a terminal node:
+%       If this is the last word, then this is an extended abbreviation.
+%         ERROR. Words must be added short to long. Why?
+%         Because if you add ``New York City Council => N.Y.C.C.''
+%         And then you add ``New York => N.Y.''
+%         It is very hard to set the default for ``New York City'' to N.Y. City
+%       Otherwise, it's a branch (like New in New York and New Jersey).
+%         Set S to whatever the current state says.
+%         Add the current word to the current default text.
+%   Otherwise it is a new word for this state.
+%     We must define the command \bb@jab@[S]@[word].
+%       If this is the last word, make it a terminal node, and set S to zero.
+%       If it's not the last word:
+%         Define \bb@jab@[S] to output the current default text (if undefined).
+%         Pick a new state S', and define the command to point to S'.
+%         Set the state to S'.
+%         Add the current word to the current default text.
+%
+\newcount\bb@jrnabb@maxstate \bb@jrnabb@maxstate\z@
+\def\bb@abbrev#1#2{%
+    \def\reserved@a{#2}%
+    \let\reserved@b\@empty % Current default text
+    \let\reserved@c\relax  % Holder for the word to execute
+    \bb@jrnabb@state\z@
+    \bb@jrnabb@add@macros
+    \process@words{#1}\bb@jrnabb@addwd\bb@jrnabb@addwd\bb@jrnabb@addspc
+    \bb@jrnabb@addwd@end % Do the last word (because of delayed execution)
+    \bb@jrnabb@restore   % Restore meanings of node macros
+}%
+\def\bb@jrnabb@addwd@end{%
+    \@expand{%
+	\expandafter\bb@jrnabb@addwd@end@
+		\csname bb@jab@\the\bb@jrnabb@state\endcsname
+    }{\csname bb@jab@\the\bb@jrnabb@state @\reserved@c\endcsname}i%
+}
+\def\bb@jrnabb@addwd@end@#1#2{%
+    \ifx#2\relax
+	\expandafter\def\expandafter#2\expandafter{%
+	    \expandafter\bb@jrnabb@term\expandafter{\reserved@a}%
+	}%
+    \else
+	\bb@jrnabb@addwd@end@err
+    \fi
+}
+\def\bb@jrnabb@addwd@end@err{%
+    \PackageError\bb@pkgname{%
+	Cannot add shorter sub-abbreviation \reserved@a\MessageBreak
+	after adding a longer one%
+    }{%
+	The current abbreviation will be ignored. Update the table\MessageBreak
+	to put this abbreviation entry before the longer one.
+    }%
+}
+\def\bb@jrnabb@add@curtxt#1{%
+    \ifx\reserved@b\@empty
+	\def\reserved@b{\bb@jrnabb@default{#1}}%
+    \else
+	\addto@macro\reserved@b{\bb@jrnabb@wd{#1}}%
+    \fi
+}
+\def\bb@jrnabb@addspc{\bb@jrnabb@addwd{ }}
+\def\bb@jrnabb@addwd#1{%
+    \ifx\reserved@c\relax\else
+	\bb@jrnabb@addwd@do
+    \fi
+    \def\reserved@c{#1}%
+}
+\def\bb@jrnabb@addwd@do{%
+    \@expand{%
+	\expandafter\bb@jrnabb@addwd@
+		\csname bb@jab@\the\bb@jrnabb@state\endcsname
+    }{\csname bb@jab@\the\bb@jrnabb@state @\reserved@c\endcsname}i%
+}
+\def\bb@jrnabb@addwd@#1#2{%
+    \ifx#2\relax
+	\ifx#1\relax
+	    \let#1\reserved@b
+	\fi
+	\advance\bb@jrnabb@maxstate\@ne \bb@jrnabb@state\bb@jrnabb@maxstate
+	\edef#2{\noexpand\bb@jrnabb@nonterm{\the\bb@jrnabb@state}}%
+	\expandafter\bb@jrnabb@add@curtxt\expandafter{\reserved@c}%
+	\expandafter\let\csname bb@jab@\the\bb@jrnabb@state\endcsname\reserved@b
+    \else
+	#2#2%
+    \fi
+}
+\def\bb@jrnabb@add@macros{%
+    % #1 is the text of the current state, #2 is the macro itself
+    \def\bb@jrnabb@term##1##2{%
+	\advance\bb@jrnabb@maxstate\@ne \bb@jrnabb@state\bb@jrnabb@maxstate
+	\edef##2{\noexpand\bb@jrnabb@nonterm{\the\bb@jrnabb@state}}
+	\def\reserved@b{\bb@jrnabb@default{##1}}%
+	\expandafter\let\csname bb@jab@\the\bb@jrnabb@state\endcsname\reserved@b
+    }%
+    \def\bb@jrnabb@nonterm##1##2{%
+	\bb@jrnabb@state##1\relax
+	\expandafter\bb@jrnabb@add@curtxt\expandafter{\reserved@c}%
+    }%
+}
+\iffalse
+\bb@abbrev{Hello World!}{H.W.!}
+\bb@abbrev{Hello There}{H.T.}
+\bb@abbrev{Hello You People to Me I Am Hot}{H.Y.T.M.H.}
+\bb@abbrev{Hello There Now to You}{H.T.N.Y.}
+\bb@abbrev{to Me I Am Cool}{to M.I.A.C.}
+\bb@jrnabb@abbrev{Say Hello World! and Hello There, Cool. Hello There Now to
+    Me I Am Cool! Hello You People to Me I Am Cool}{\immediate\write16}
+\errorhere
+\fi
+%
+%\errorcontextlines=100
+\endinput

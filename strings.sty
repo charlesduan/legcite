@@ -1,0 +1,239 @@
+%
+% This is strings.sty, by Charles Duan.
+%
+% Copyright 2013 Charles Duan. This program is free software: you can
+% redistribute it and/or modify it under the terms of the GNU General Public
+% License as published by the Free Software Foundation, either version 3 of the
+% License, or (at your option) any later version.
+%
+% This program is distributed in the hope that it will be useful, but WITHOUT
+% ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+% FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+%
+% You should have received a copy of the GNU General Public License along with
+% this program.  If not, see <http://www.gnu.org/licenses/>.
+%
+% Provides internal commands for doing substring comparisons.
+%
+%
+% Tests whether the first string is a prefix for the second string. Takes four
+% arguments: prefix, string, true-command, false-command.
+\ProvidesFile{strings}[2004/10/09 String tests]
+%
+% Performs an \if...-type test. Takes an argument of an if-conditional, like:
+%   \ifx#1\test
+% and turns it into:
+%   \ifx#1\test\expandafter\@firstoftwo\else\expandafter\@secondoftwo
+% Usage is like:
+%   \@test\if[test]\fi{true stuff}{false stuff}
+% The delimiting \fi ensures that the test will be properly skipped over inside
+% another conditional.
+\def\@test#1\fi{#1\expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi}
+%
+% Tests if something is a character.
+\def\@ifletter#1{\@test \ifcat a\noexpand#1\fi}
+%
+% Tests if something is a single digit token.
+\def\@ifdigit#1{\@ifonechar{#1}{\@test\ifnum 9<1\noexpand#1 \fi}{\@secondoftwo}}
+%
+% Expands a token multiple times. Takes three arguments: the callback to be
+% executed when done expanding, the stuff to expand, and several tokens, one for
+% each expansion to be performed.
+\def\@expand#1#2#3{\@@expand{#2}{#1}#3\@stop}
+\def\@@expand#1#2#3#4\@stop{%
+    \@ifempty{#4}{%
+	\expandafter\@@@expand\expandafter{#1}{#2}%
+    }{%
+	\expandafter\@@expand\expandafter{#1}{#2}#4\@stop
+    }%
+}
+\def\@@@expand#1#2{#2{#1}}
+%
+% Eats two \fi, places two \fi, and then places your argument. This is for
+% jumping out of a nested conditional by pure expansion.
+\def\@skipafi#1#2\fi{\fi#1}
+\def\@eatafi#1#2\fi{#1}
+%
+\let\str@mark\relax
+\let\str@stop\relax
+\def\str@test{\str@stop}
+\newcommand*\@ifprefix[2]{%
+    \edef\str@act{\noexpand\in@{\noexpand\@nil#1}{\noexpand\@nil#2}}\str@act
+    \ifin@\expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi
+}
+\newcommand*\@ifsuffix[2]{%
+    \edef\str@act{\noexpand\in@{#1\noexpand\@nil}{#2\noexpand\@nil}}\str@act
+    \ifin@\expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi
+}
+\newtoks\str@a \def\str@ua{\the\str@a}
+\newtoks\str@b \def\str@ub{\the\str@b}
+\newtoks\str@c \def\str@uc{\the\str@c}
+%
+% Splits the second string into two parts, based on the first string. If the
+% first string is not found in the second string, then the second string is
+% passed wholesale to the first argument, and the second argument is empty.
+% Takes three parameters: the splitting string, the string to be split, and the
+% command to be run with two parameters.
+\newcommand*\@split[3]{%
+    \str@a{#1}\str@b{#2}\str@c{#3}%
+    \let\str@act\relax
+    \edef\str@act{%
+	\def\str@act####1\str@ua####2\str@stop{%
+	    \noexpand\ifx\noexpand\@split####2%
+		\def\str@act{\str@uc{\str@ub}{}}%
+	    \noexpand\else
+		\def\str@act{%
+		    \noexpand\@@split{\str@uc}{####1}%
+			####2\str@stop
+		}%
+	    \noexpand\fi
+	    \str@act
+	}%
+	\str@act\str@ub\str@mark\str@ua\noexpand\@split\str@stop
+    }%
+    \str@act
+}
+\def\@@split#1#2#3\str@mark#4\str@stop{#1{#2}{#3}}
+%
+% Determines if a string is empty. Takes three arguments: the string to test,
+% the true value, and the false value.
+\newcommand*\@ifempty[1]{%
+    \str@ifempty#1\str@mark\str@mark\str@stop\@firstoftwo\@secondoftwo
+    %\ifx\str@test#1\str@test \expandafter\@firstoftwo
+    %\else                    \expandafter\@secondoftwo \fi
+}
+\def\str@ifempty#1#2\str@mark#3\str@stop#4#5{%
+    \ifx\str@test#3\str@test \expandafter#4%
+			     %\@skipafi{\str@@ifempty{#6}}%
+    \else                    \expandafter#5\fi
+}
+\def\str@@ifempty#1{%
+    \ifx\str@test#1\str@test \expandafter\@firstoftwo
+    \else                    \expandafter\@secondoftwo \fi
+}
+\newcommand*\@ifnotempty[1]{%
+    \str@ifempty#1\str@mark\str@mark\str@stop\@gobble\@firstofone
+}
+%
+% Splits off a prefix from a string. Arguments are the prefix string, the test
+% string, and the command to be run if the prefix is found.
+\def\chop@prefix#1#2#3{%
+    \let\str@act\relax
+    \str@a{#1}\str@b{#2}\str@c{#3}%
+    \toks@{#3}%
+    \edef\str@act{%
+	\def\str@act####1\str@mark\str@ua####2\str@mark####3\str@stop{%
+	    \noexpand\@ifempty{####1}{\str@uc{####2}}{}%
+	}%
+	\str@act\str@mark\str@ub\str@mark\str@ua\str@mark\str@stop
+    }%
+    \str@act
+}
+%
+% Iterates through a string, separating out words. The given command is run on
+% each word. Words are defined as strings of characters with letter catcodes.
+% First argument is the sentence. Second is the command (which is assumed to
+% take one argument). Third is the command applied on punctuation, applied to
+% each piece of punctuation.
+%
+% Spaces are automatically placed in the stream (because it's so easy to eat
+% them as necessary).
+%
+% Although this function uses \def and such, in theory it should work inside an
+% \edef...
+%
+\def\process@words#1#2#3#4{%
+    \str@proc@wds#2#3#4#1 \str@test% Ending token is \str@test
+}
+\def\str@proc@wds#1#2#3#4 #5{%
+    \@ifnotempty{#4}{\str@proc@wd#1#2#3\str@mark#4\str@test}%
+    \ifx\str@test#5\else
+	#3%
+	\@skipafi{\str@proc@wds#1#2#3#5}%
+    \fi
+}
+\def\str@ifltr#1{%
+    \ifcat a#1\expandafter\@firstoftwo\else
+	\ifcat1#1\expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi
+	{%
+	    \ifnum9<1#1 \@skipafi{\expandafter\@firstoftwo}%
+	    \else\@skipafi{\expandafter\@secondoftwo}\fi
+	}{%
+	    \expandafter\@secondoftwo
+	}%
+    \fi
+}
+\def\str@proc@wd#1#2#3#4\str@mark#5{%
+    \ifx\str@test#5%
+	\@ifnotempty{#4}{#1{#4}}%
+    \else
+	\str@ifltr{#5}{%
+	    \@skipafi{\str@proc@wd#1#2#3#4#5\str@mark}%
+	}{%
+	    \@ifnotempty{#4}{#1{#4}}%
+	    #2{#5}%
+	    \@skipafi{\str@proc@wd#1#2#3\str@mark}%
+	}
+    \fi
+}
+% Chops space off of a string. Fully expandable.
+\newcommand*{\chop@space@then@run}[2]{%
+    \@ifnotempty{#1}{\str@chopspc#1\str@test\str@test\str@stop{#2}}%
+}
+\edef\str@chopspc#1#2\str@test#3\str@stop#4{%
+    \noexpand\ifx\noexpand\str@test#1%
+	\noexpand\@skipafi{#4{}}%
+    \noexpand\else
+	\noexpand\@skipafi{%
+	    \noexpand\str@chopspc@#1#2\str@mark\space\str@mark\str@stop{#4}%
+	}%
+    \noexpand\fi
+}
+\edef\str@chopspc@#1 \str@mark#2\str@stop#3{%
+    \noexpand\@ifempty{#2}{\noexpand\str@chopspc@@#1{#3}}{%
+	\noexpand\str@chopspc@#1\str@mark\space\str@mark\str@stop{#3}%
+    }%
+}
+\def\str@chopspc@@#1\str@mark#2{#2{#1}}
+\newcommand*{\chop@space}[1]{\chop@space@then@run{#1}{\@iden}}
+%
+% Splits a string against a substring and runs the given function on each of the
+% pieces.
+\def\full@split#1#2#3{\@split{#1}{#2}{\str@fsp{#1}{#3}}}
+\def\str@fsp#1#2#3#4{#2{#3}\@ifempty{#4}{}{\full@split{#1}{#4}{#2}}}
+%
+% Tests whether a string is a single character. If it is zero characters, this
+% function treats it as false.
+\def\@ifonechar#1{\@ifempty{#1}{\@secondoftwo}{\@ifonechar@#1\str@stop}}
+\def\@ifonechar@#1#2\str@stop{\@ifempty{#2}}
+%
+% Adds do a macro.
+\def\addto@macro#1#2{\expandafter\def\expandafter#1\expandafter{#1#2}}
+%
+% Adds to a macro, but instantiates the macro as empty if it didn't exist
+% before.
+\def\addto@list#1#2{%
+    \ifx#1\relax\def#1{#2}\else\addto@macro#1{#2}\fi
+}
+%
+% Removes braces from the arguments. This is useful if you have a callback that
+% takes a series of arguments, and you use one of the functions like \@expand
+% that puts braces around the callback result.
+\def\@unbrace#1#2{#1#2}
+%
+% Takes a list of tokens in #2, and runs macro #1 with each token as an
+% argument. The tokens cannot be groups, because the last token will be
+% unintentionally ungrouped.
+\def\@foreach#1#2{\@ifnotempty{#2}{\@@foreach{#1}#2\str@stop}}
+\def\@@foreach#1#2#3\str@stop{#1{#2}\@ifnotempty{#3}{\@@foreach{#1}#3\str@stop}}
+%
+% Same as \@foreach, but does two tokens at a time. This has the side benefit
+% that the tokens can be groups as well, since the last element will never be
+% accidentally ungrouped.
+\def\@foreach@pair#1#2{%
+    \@ifnotempty{#2}{\@@foreach@pair{#1}#2\str@stop}%
+}
+\def\@@foreach@pair#1#2#3#4\str@stop{%
+    #1{#2}{#3}\@ifnotempty{#4}{\@@foreach{#1}#4\str@stop}%
+}
+\endinput
